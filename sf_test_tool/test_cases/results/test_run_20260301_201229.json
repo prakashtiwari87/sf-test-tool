@@ -1,0 +1,37 @@
+{
+  "run_timestamp": "2026-03-01T20:12:29.020386",
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 0,
+    "errors": 1,
+    "unknown": 0,
+    "pass_rate": 0.0,
+    "avg_duration": 0.59
+  },
+  "results": [
+    {
+      "test_id": "PROMPT_001",
+      "test_name": "Prompt Test 1",
+      "test_type": "prompt",
+      "priority": "Medium",
+      "tags": "prompt",
+      "input_data": "Create an Account record in Salesforce with Salesforce.com name. If Salesforce already exists, then share me the RecordID of the existing record.",
+      "expected_output": "Record or operation completed successfully in Salesforce with valid data returned",
+      "actual_output": "None",
+      "status": "ERROR",
+      "confidence": 0,
+      "consensus": "Error during execution",
+      "judge_summary": "After applying your include/exclude rules, no valid fields remain for Account.",
+      "individual_results": [],
+      "reason": "After applying your include/exclude rules, no valid fields remain for Account.",
+      "pass_count": 0,
+      "fail_count": 0,
+      "error_count": 9,
+      "models_used": 9,
+      "duration_sec": 0.59,
+      "timestamp": "2026-03-01T20:12:29.019801",
+      "error": "After applying your include/exclude rules, no valid fields remain for Account."
+    }
+  ]
+}

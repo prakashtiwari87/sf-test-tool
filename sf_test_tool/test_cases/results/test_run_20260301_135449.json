@@ -1,0 +1,37 @@
+{
+  "run_timestamp": "2026-03-01T13:54:49.174228",
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 0,
+    "errors": 1,
+    "unknown": 0,
+    "pass_rate": 0.0,
+    "avg_duration": 0.65
+  },
+  "results": [
+    {
+      "test_id": "PROMPT_001",
+      "test_name": "Prompt Test 1",
+      "test_type": "prompt",
+      "priority": "Medium",
+      "tags": "prompt",
+      "input_data": "Create a Contact record in Salesforce with all Contact fields filled in appropriately (both mandatory and optional) and save it. Return me the Contact details including the Contact RecordID.",
+      "expected_output": "LLM_JUDGE_DECIDES",
+      "actual_output": "None",
+      "status": "ERROR",
+      "confidence": 0,
+      "consensus": "Error during execution",
+      "judge_summary": "LLM Error (gemini/gemini-1.5-flash): litellm.AuthenticationError: GeminiException - {\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"API key not valid. Please pass a valid API key.\",\n    \"status\": \"INVALID_ARGUMENT\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"API_KEY_INVALID\",\n        \"domain\": \"googleapis.com\",\n        \"metadata\": {\n          \"service\": \"generativelanguage.googleapis.com\"\n        }\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.LocalizedMessage\",\n        \"locale\": \"en-US\",\n        \"message\": \"API key not valid. Please pass a valid API key.\"\n      }\n    ]\n  }\n}\n",
+      "individual_results": [],
+      "reason": "LLM Error (gemini/gemini-1.5-flash): litellm.AuthenticationError: GeminiException - {\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"API key not valid. Please pass a valid API key.\",\n    \"status\": \"INVALID_ARGUMENT\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"API_KEY_INVALID\",\n        \"domain\": \"googleapis.com\",\n        \"metadata\": {\n          \"service\": \"generativelanguage.googleapis.com\"\n        }\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.LocalizedMessage\",\n        \"locale\": \"en-US\",\n        \"message\": \"API key not valid. Please pass a valid API key.\"\n      }\n    ]\n  }\n}\n",
+      "pass_count": 0,
+      "fail_count": 0,
+      "error_count": 9,
+      "models_used": 9,
+      "duration_sec": 0.65,
+      "timestamp": "2026-03-01T13:54:49.173582",
+      "error": "LLM Error (gemini/gemini-1.5-flash): litellm.AuthenticationError: GeminiException - {\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"API key not valid. Please pass a valid API key.\",\n    \"status\": \"INVALID_ARGUMENT\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"API_KEY_INVALID\",\n        \"domain\": \"googleapis.com\",\n        \"metadata\": {\n          \"service\": \"generativelanguage.googleapis.com\"\n        }\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.LocalizedMessage\",\n        \"locale\": \"en-US\",\n        \"message\": \"API key not valid. Please pass a valid API key.\"\n      }\n    ]\n  }\n}\n"
+    }
+  ]
+}

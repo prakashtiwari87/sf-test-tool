@@ -1,0 +1,83 @@
+{
+  "run_timestamp": "2026-03-01T20:02:28.318097",
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "unknown": 0,
+    "pass_rate": 100.0,
+    "avg_duration": 3.48
+  },
+  "results": [
+    {
+      "test_id": "PROMPT_001",
+      "test_name": "Prompt Test 1",
+      "test_type": "prompt",
+      "priority": "Medium",
+      "tags": "prompt",
+      "input_data": "Navigate to the Salesforce and Create 2 Contact records in Salesforce having below field values filled: First Name, Last Name, Account Name (select any available existing Account record), Email, Title, Department, and All the Phone fields. Once saved, return the Salesforce RecordIDs as Output.",
+      "expected_output": "Record or operation completed successfully in Salesforce with valid data returned",
+      "actual_output": "{'operation': 'create', 'object': 'Contact', 'records_created': 2, 'record_ids': ['003gK00000SNUYRQA5', '003gK00000SNVhJQAX'], 'records': [{'record_index': 1, 'record_id': '003gK00000SNUYRQA5', 'record': {'Id': '003gK00000SNUYRQA5', 'LastName': 'Doe', 'AssistantPhone': '555-0104', 'Department': 'Sales', 'Email': 'johndoe@testcompany.com', 'Fax': '555-0103', 'FirstName': 'John', 'HomePhone': '555-0102', 'MobilePhone': '555-0101', 'OtherPhone': '555-0105', 'Phone': '555-0100', 'Title': 'Sales Manager'}, 'fields_used': ['LastName', 'FirstName', 'Email', 'Title', 'Department', 'Phone', 'MobilePhone', 'HomePhone', 'Fax', 'AssistantPhone', 'OtherPhone', 'AccountId']}, {'record_index': 2, 'record_id': '003gK00000SNVhJQAX', 'record': {'Id': '003gK00000SNVhJQAX', 'LastName': 'Wheeler', 'AssistantPhone': '555-0155', 'Department': 'Marketing', 'Email': 'eleanor.wheeler@testcompany.com', 'Fax': '555-0144', 'FirstName': 'Eleanor', 'HomePhone': '555-0133', 'MobilePhone': '555-0122', 'OtherPhone': '555-0166', 'Phone': '555-0111', 'Title': 'Senior Manager'}, 'fields_used': ['FirstName', 'LastName', 'Email', 'Title', 'Department', 'Phone', 'MobilePhone', 'HomePhone', 'Fax', 'AssistantPhone', 'OtherPhone', 'AccountId']}], 'errors': [], 'fields_excluded': [], 'summary': '2 Contact record(s) created successfully. Record IDs: 003gK00000SNUYRQA5, 003gK00000SNVhJQAX'}",
+      "status": "PASS",
+      "confidence": 100.0,
+      "consensus": "Unanimous PASS",
+      "judge_summary": "9 of 9 say PASS, 0 say FAIL, 0 errored -> 100.0% confidence",
+      "individual_results": [
+        {
+          "status": "PASS",
+          "reason": "The actual result shows two Contact records were created successfully with valid data returned, matching the expected result of a record or operation completed successfully in Salesforce.",
+          "model": "groq/llama-3.3-70b-versatile"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result matches the expected result in that it confirms 2 records were created successfully in Salesforce with valid data returned.",
+          "model": "groq/llama-3.1-8b-instant"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result matches the expected result, with two Contact records created successfully in Salesforce with valid data returned.",
+          "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result indicates that two Contact records were created successfully with valid data returned, matching the expected result of a successful operation in Salesforce.",
+          "model": "groq/meta-llama/llama-4-maverick-17b-128e-instruct"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result shows two Contact records created successfully with valid data and no errors, matching the expected successful operation.",
+          "model": "groq/compound-beta"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result shows two Contact records created successfully with valid data and no errors, matching the expected successful operation.",
+          "model": "groq/compound-beta-mini"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result confirms successful creation of 2 Contact records with valid data returned, matching the expected outcome of a completed operation with valid records.",
+          "model": "mistral/open-mistral-7b"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result matches the expected outcome by successfully creating 2 Contact records with valid data and no errors.",
+          "model": "mistral/open-mixtral-8x7b"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result matches the expected outcome by successfully creating two Contact records with valid data and no errors.",
+          "model": "mistral/codestral-latest"
+        }
+      ],
+      "reason": "9 of 9 say PASS, 0 say FAIL, 0 errored -> 100.0% confidence",
+      "pass_count": 9,
+      "fail_count": 0,
+      "error_count": 0,
+      "models_used": 9,
+      "duration_sec": 3.48,
+      "timestamp": "2026-03-01T20:02:28.317233",
+      "error": ""
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "run_timestamp": "2026-03-01T19:29:02.349958",
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 0,
+    "errors": 1,
+    "unknown": 0,
+    "pass_rate": 0.0,
+    "avg_duration": 1.8
+  },
+  "results": [
+    {
+      "test_id": "PROMPT_001",
+      "test_name": "Prompt Test 1",
+      "test_type": "prompt",
+      "priority": "Medium",
+      "tags": "prompt",
+      "input_data": "Create 2 Contact records in Salesforce having all the non-system generated field values filled and return the Salesforce Record ID for confirmation.",
+      "expected_output": "Record or operation completed successfully in Salesforce with valid data returned",
+      "actual_output": "None",
+      "status": "ERROR",
+      "confidence": 0,
+      "consensus": "Error during execution",
+      "judge_summary": "Create Error: Create Error: Malformed request https://nimbusai-dev-ed.develop.my.salesforce.com/services/data/v59.0/sobjects/Contact/. Response content: [{'message': \"The MailingStateCode field contains AC, which isn't an available state. Your administrator can add it for you.\", 'errorCode': 'FIELD_INTEGRITY_EXCEPTION', 'fields': ['MailingStateCode']}]",
+      "individual_results": [],
+      "reason": "Create Error: Create Error: Malformed request https://nimbusai-dev-ed.develop.my.salesforce.com/services/data/v59.0/sobjects/Contact/. Response content: [{'message': \"The MailingStateCode field contains AC, which isn't an available state. Your administrator can add it for you.\", 'errorCode': 'FIELD_INTEGRITY_EXCEPTION', 'fields': ['MailingStateCode']}]",
+      "pass_count": 0,
+      "fail_count": 0,
+      "error_count": 9,
+      "models_used": 9,
+      "duration_sec": 1.8,
+      "timestamp": "2026-03-01T19:29:02.349266",
+      "error": "Create Error: Create Error: Malformed request https://nimbusai-dev-ed.develop.my.salesforce.com/services/data/v59.0/sobjects/Contact/. Response content: [{'message': \"The MailingStateCode field contains AC, which isn't an available state. Your administrator can add it for you.\", 'errorCode': 'FIELD_INTEGRITY_EXCEPTION', 'fields': ['MailingStateCode']}]"
+    }
+  ]
+}

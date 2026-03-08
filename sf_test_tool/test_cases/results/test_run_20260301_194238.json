@@ -1,0 +1,175 @@
+{
+  "run_timestamp": "2026-03-01T19:42:38.477293",
+  "summary": {
+    "total": 3,
+    "passed": 1,
+    "failed": 1,
+    "errors": 1,
+    "unknown": 0,
+    "pass_rate": 33.3,
+    "avg_duration": 0.77
+  },
+  "results": [
+    {
+      "test_id": "PROMPT_001",
+      "test_name": "Prompt Test 1",
+      "test_type": "prompt",
+      "priority": "Medium",
+      "tags": "prompt",
+      "input_data": "Navigate to the Salesforce UI and Create 2 Contact records in Salesforce having below field values filled using the available picklist values: First Name, Last Name, Account Name (select any available existing Account record), Email, Title, Department, All Phone fields and Mailing Address.",
+      "expected_output": "Record or operation completed successfully in Salesforce with valid data returned",
+      "actual_output": "None",
+      "status": "ERROR",
+      "confidence": 0,
+      "consensus": "Error during execution",
+      "judge_summary": "Create Error: Create Error: Malformed request https://nimbusai-dev-ed.develop.my.salesforce.com/services/data/v59.0/sobjects/Contact/. Response content: [{'message': \"The MailingStateCode field contains AC, which isn't an available state. Your administrator can add it for you.\", 'errorCode': 'FIELD_INTEGRITY_EXCEPTION', 'fields': ['MailingStateCode']}]",
+      "individual_results": [],
+      "reason": "Create Error: Create Error: Malformed request https://nimbusai-dev-ed.develop.my.salesforce.com/services/data/v59.0/sobjects/Contact/. Response content: [{'message': \"The MailingStateCode field contains AC, which isn't an available state. Your administrator can add it for you.\", 'errorCode': 'FIELD_INTEGRITY_EXCEPTION', 'fields': ['MailingStateCode']}]",
+      "pass_count": 0,
+      "fail_count": 0,
+      "error_count": 9,
+      "models_used": 9,
+      "duration_sec": 1.03,
+      "timestamp": "2026-03-01T19:42:27.649101",
+      "error": "Create Error: Create Error: Malformed request https://nimbusai-dev-ed.develop.my.salesforce.com/services/data/v59.0/sobjects/Contact/. Response content: [{'message': \"The MailingStateCode field contains AC, which isn't an available state. Your administrator can add it for you.\", 'errorCode': 'FIELD_INTEGRITY_EXCEPTION', 'fields': ['MailingStateCode']}]"
+    },
+    {
+      "test_id": "PROMPT_002",
+      "test_name": "Prompt Test 2",
+      "test_type": "prompt",
+      "priority": "Medium",
+      "tags": "prompt",
+      "input_data": "For Mailing Address, select any random Country from the available options and accordingly select the existing State fields from available picklist values.",
+      "expected_output": "Record or operation completed successfully in Salesforce with valid data returned",
+      "actual_output": "{'operation': 'update', 'object': 'Contact', 'summary': 'update on Contact noted'}",
+      "status": "PASS",
+      "confidence": 88.9,
+      "consensus": "Strong PASS",
+      "judge_summary": "8 of 9 say PASS, 1 say FAIL, 0 errored -> 88.9% confidence",
+      "individual_results": [
+        {
+          "status": "PASS",
+          "reason": "The actual result indicates a successful update operation on the Contact object, which aligns with the expected result of a record or operation being completed successfully in Salesforce.",
+          "model": "groq/llama-3.3-70b-versatile"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The actual result indicates an update operation, however the phrase 'operation completed successfully' suggests a broader scope of operations beyond just update.",
+          "model": "groq/llama-3.1-8b-instant"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result indicates a successful update operation on a Contact record in Salesforce, which aligns with the expected result of a record or operation completing successfully.",
+          "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result indicates a successful update operation on the Contact object, which aligns with the expected result of completing the operation successfully.",
+          "model": "groq/meta-llama/llama-4-maverick-17b-128e-instruct"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result shows a successful update operation on a Contact, which satisfies the expected successful record operation.",
+          "model": "groq/compound-beta"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result shows a successful update operation on a Contact, meeting the expected success criteria.",
+          "model": "groq/compound-beta-mini"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result confirms a successful Contact update operation in Salesforce, matching the expected outcome of a completed record operation with valid data returned.",
+          "model": "mistral/open-mistral-7b"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result indicates a successful update operation on a Contact object, matching the expected outcome of a completed record operation with valid data.",
+          "model": "mistral/open-mixtral-8x7b"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result indicates a successful update operation on the Contact object, which aligns with the expected outcome of a record or operation being completed successfully.",
+          "model": "mistral/codestral-latest"
+        }
+      ],
+      "reason": "8 of 9 say PASS, 1 say FAIL, 0 errored -> 88.9% confidence",
+      "pass_count": 8,
+      "fail_count": 1,
+      "error_count": 0,
+      "models_used": 9,
+      "duration_sec": 0.64,
+      "timestamp": "2026-03-01T19:42:33.573184",
+      "error": ""
+    },
+    {
+      "test_id": "PROMPT_003",
+      "test_name": "Prompt Test 3",
+      "test_type": "prompt",
+      "priority": "Medium",
+      "tags": "prompt",
+      "input_data": "If you are not able to select the Mailing Country and State due to an error, just proceed in creating a record without these fields. Once saved, return the Salesforce RecordID.",
+      "expected_output": "Record or operation completed successfully in Salesforce with valid data returned",
+      "actual_output": "{'steps_executed': 1, 'steps': [{'step': 3, 'action': 'api_call', 'result': None, 'error': \"API Error: Invalid URL 'nimbusai-dev-ed.develop.my.salesforce.comSalesforce API': No scheme supplied. Perhaps you meant https://nimbusai-dev-ed.develop.my.salesforce.comSalesforce API?\"}], 'final_result': None, 'summary': 'Executed 1 real Salesforce steps'}",
+      "status": "FAIL",
+      "confidence": 100.0,
+      "consensus": "Unanimous FAIL",
+      "judge_summary": "0 of 9 say PASS, 9 say FAIL, 0 errored -> 100.0% confidence",
+      "individual_results": [
+        {
+          "status": "FAIL",
+          "reason": "The actual result contains an API error due to an invalid URL, indicating that the record or operation was not completed successfully in Salesforce.",
+          "model": "groq/llama-3.3-70b-versatile"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The test failed due to an invalid Salesforce URL causing an API error.",
+          "model": "groq/llama-3.1-8b-instant"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The actual result shows an API error due to an invalid URL, which does not match the expected result of a successful record or operation completion in Salesforce.",
+          "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The actual result indicates an API error due to an invalid URL, whereas the expected result requires a successful operation with valid data returned.",
+          "model": "groq/meta-llama/llama-4-maverick-17b-128e-instruct"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The test failed due to an invalid URL causing an API error, preventing successful record or operation completion.",
+          "model": "groq/compound-beta"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The test did not complete successfully because the API call failed due to an invalid URL, resulting in no valid data returned.",
+          "model": "groq/compound-beta-mini"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The API call failed due to an invalid URL format (missing scheme), preventing successful record/operation execution in Salesforce.",
+          "model": "mistral/open-mistral-7b"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The test failed due to an invalid API URL format in the request.",
+          "model": "mistral/open-mixtral-8x7b"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The actual result shows an API error due to an invalid URL format, indicating the operation did not complete successfully.",
+          "model": "mistral/codestral-latest"
+        }
+      ],
+      "reason": "0 of 9 say PASS, 9 say FAIL, 0 errored -> 100.0% confidence",
+      "pass_count": 0,
+      "fail_count": 9,
+      "error_count": 0,
+      "models_used": 9,
+      "duration_sec": 0.65,
+      "timestamp": "2026-03-01T19:42:38.476213",
+      "error": ""
+    }
+  ]
+}

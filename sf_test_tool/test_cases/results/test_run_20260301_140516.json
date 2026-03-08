@@ -1,0 +1,83 @@
+{
+  "run_timestamp": "2026-03-01T14:05:16.258893",
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "errors": 0,
+    "unknown": 0,
+    "pass_rate": 0.0,
+    "avg_duration": 3.2
+  },
+  "results": [
+    {
+      "test_id": "PROMPT_001",
+      "test_name": "Prompt Test 1",
+      "test_type": "prompt",
+      "priority": "Medium",
+      "tags": "prompt",
+      "input_data": "Create a Contact record in Salesforce with all Contact fields filled in appropriately (both mandatory and optional) and save it. Return me the Contact details including the Contact RecordID.",
+      "expected_output": "LLM_JUDGE_DECIDES",
+      "actual_output": "{'steps_executed': 8, 'steps': [{'step': 1, 'action': 'navigate', 'result': {'simulated': True, 'response': '```json\\n{\\n  \"success\": true,\\n  \"message\": \"Navigated to Contacts tab successfully\",\\n  \"data\": {\\n    \"currentPage\": \"Contact List View\",\\n    \"numberOfRecords\": 25,\\n    \"records\": [\\n      {\"Id\": \"001d300000000abc\", \"Name\": \"John Doe\"},\\n      {\"Id\": \"001d300000000abd\", \"Name\": \"Jane Smith\"},\\n      {\"Id\": \"001d300000000abe\", \"Name\": \"Bob Johnson\"}\\n    ]\\n  }\\n}\\n```'}, 'error': None}, {'step': 2, 'action': 'click', 'result': {'simulated': True, 'response': '```\\n{\\n  \"success\": true,\\n  \"message\": \"New Contact form opened\",\\n  \"data\": {\\n    \"formFields\": [\\n      \"First Name\",\\n      \"Last Name\",\\n      \"Email\",\\n      \"Phone\",\\n      \"Account Name\"\\n    ]\\n  }\\n}\\n```'}, 'error': None}, {'step': 3, 'action': 'type', 'result': {'simulated': True, 'response': '```json\\n{\"success\": true, \"message\": \"Field populated with \\'John\\'\", \"data\": {\"fieldValue\": \"John\"}}\\n```'}, 'error': None}, {'step': 4, 'action': 'type', 'result': {'simulated': True, 'response': '```json\\n{\\n  \"success\": true,\\n  \"message\": \"Step completed\",\\n  \"data\": {\\n    \"fieldName\": \"Last Name\",\\n    \"fieldValue\": \"Doe\"\\n  }\\n}\\n```'}, 'error': None}, {'step': 5, 'action': 'type', 'result': {'simulated': True, 'response': '```json\\n{\\n  \"success\": true,\\n  \"message\": \"Step completed\",\\n  \"data\": {\\n    \"email\": \"john.doe@example.com\"\\n  }\\n}\\n```'}, 'error': None}, {'step': 6, 'action': 'type', 'result': {'simulated': True, 'response': '```json\\n{\\n  \"success\": true,\\n  \"message\": \"Field populated with \\'123-456-7890\\'\",\\n  \"data\": {\\n    \"Phone\": \"123-456-7890\"\\n  }\\n}\\n```'}, 'error': None}, {'step': 7, 'action': 'click', 'result': {'simulated': True, 'response': '```json\\n{\\n  \"success\": true,\\n  \"message\": \"Contact record saved\",\\n  \"data\": {\\n    \"recordId\": \"003d300000000abc\"\\n  }\\n}\\n```'}, 'error': None}, {'step': 8, 'action': 'soql_query', 'result': {'records': [], 'count': 0},",
+      "status": "FAIL",
+      "confidence": 66.7,
+      "consensus": "Weak FAIL",
+      "judge_summary": "3 of 9 say PASS, 6 say FAIL, 0 errored -> 66.7% confidence",
+      "individual_results": [
+        {
+          "status": "FAIL",
+          "reason": "The actual result contains a SOQL error with a malformed query, indicating that the test did not achieve the expected outcome of LLM_JUDGE_DECIDES.",
+          "model": "groq/llama-3.3-70b-versatile"
+        },
+        {
+          "status": "PASS",
+          "reason": "The actual result 'executed 8 steps successfully' matches the expected result 'LLM_JUDGE_DECIDES' as it indicates that all steps have been completed as intended, albeit with an unexpected SOQL error.",
+          "model": "groq/llama-3.1-8b-instant"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The test failed due to a SOQL error caused by a malformed request in the last step, which prevented the retrieval of expected records.",
+          "model": "groq/meta-llama/llama-4-scout-17b-16e-instruct"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The test failed due to a SOQL query error in the last step, resulting in a 'MALFORMED_QUERY' error, despite the preceding 7 steps being executed successfully.",
+          "model": "groq/meta-llama/llama-4-maverick-17b-128e-instruct"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The test failed because the final SOQL query step returned a malformed query error, preventing verification of the created contact.",
+          "model": "groq/compound-beta"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The final SOQL query step errored and returned no records, indicating the test did not complete successfully.",
+          "model": "groq/compound-beta-mini"
+        },
+        {
+          "status": "PASS",
+          "reason": "All test steps executed as intended except the final SOQL query failed due to a malformed request (non-critical error in step 8, which did not affect core test logic).",
+          "model": "mistral/open-mistral-7b"
+        },
+        {
+          "status": "PASS",
+          "reason": "The test executed all 8 steps successfully, including navigation, form population, and record creation, despite a malformed SOQL query in the final step.",
+          "model": "mistral/open-mixtral-8x7b"
+        },
+        {
+          "status": "FAIL",
+          "reason": "The SOQL query step failed with a malformed query error, resulting in no records being returned.",
+          "model": "mistral/codestral-latest"
+        }
+      ],
+      "reason": "3 of 9 say PASS, 6 say FAIL, 0 errored -> 66.7% confidence",
+      "pass_count": 3,
+      "fail_count": 6,
+      "error_count": 0,
+      "models_used": 9,
+      "duration_sec": 3.2,
+      "timestamp": "2026-03-01T14:05:16.257908",
+      "error": ""
+    }
+  ]
+}
