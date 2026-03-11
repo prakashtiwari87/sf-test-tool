@@ -1,1284 +1,1175 @@
 """
-sf_metadata_engine.py — Enhanced Salesforce Metadata Sync Engine
+sf_metadata_engine.py
+Automatically discovers and caches ALL Salesforce org metadata.
+Runs on org connect — no manual configuration needed.
+Fast-fails gracefully if features not enabled in org.
 
-FEATURES:
-  • Selective metadata sync (choose which metadata types to download)
-  • Fixed function naming (aliases for backward compatibility)
-  • Complete search functionality across all metadata
-  • Proper progress callback handling
-  • Support for all metadata types: Objects, Fields, Agents, Flows, Triggers,
-    Lightning Components, Lightning Apps, Installed Packages, Validation Rules
-
-FIXES IN THIS VERSION:
-  • Added get_all_objects, get_object_fields, get_all_agents aliases
-  • Added search_objects function for metadata search
-  • Added selective_sync_metadata for choosing metadata types
-  • Fixed database column mappings
-  • Fixed progress callback signatures
+ENHANCED VERSION with selective sync support.
 """
 
 import sqlite3
 import json
+import os
+import requests
 from datetime import datetime
-from typing import Optional, Callable, Dict, List
-from contextlib import contextmanager
+from typing import Optional, Callable, List
+from config.settings_manager import DB_PATH
+
 
 # ─────────────────────────────────────────────────────────────
-# DATABASE MANAGEMENT
+# DATABASE SETUP FOR METADATA
 # ─────────────────────────────────────────────────────────────
-
-@contextmanager
-def _get_db():
-    """Context manager for database connections."""
-    from config.settings_manager import DB_PATH
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
 
 def init_metadata_db():
-    """Initialize all metadata tables with proper schema."""
-    with _get_db() as conn:
-        conn.executescript("""
+    """Create all metadata tables if they don't exist"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS sf_objects (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            org_domain  TEXT NOT NULL,
-            api_name    TEXT NOT NULL,
-            label       TEXT,
-            is_custom   INTEGER DEFAULT 0,
-            is_queryable INTEGER DEFAULT 1,
-            is_createable INTEGER DEFAULT 1,
-            key_prefix  TEXT,
-            synced_at   TEXT,
-            UNIQUE(org_domain, api_name)
-        );
-
-        CREATE TABLE IF NOT EXISTS sf_fields (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            org_domain  TEXT NOT NULL,
-            object_name TEXT NOT NULL,
-            api_name    TEXT NOT NULL,
-            label       TEXT,
-            field_type  TEXT,
-            is_custom   INTEGER DEFAULT 0,
-            is_required INTEGER DEFAULT 0,
-            max_length  INTEGER,
-            picklist_values TEXT,
-            UNIQUE(org_domain, object_name, api_name)
-        );
-
-        CREATE TABLE IF NOT EXISTS sf_agents (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            org_domain   TEXT NOT NULL,
-            agent_id     TEXT,
-            agent_name   TEXT,
-            agent_type   TEXT,
-            description  TEXT,
-            is_active    INTEGER DEFAULT 0,
-            bot_user_id  TEXT,
-            created_by   TEXT,
-            last_modified TEXT,
-            raw_json     TEXT,
-            synced_at    TEXT,
-            UNIQUE(org_domain, agent_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS sf_flows (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             org_domain    TEXT NOT NULL,
-            flow_id       TEXT,
-            api_name      TEXT,
-            label         TEXT,
-            process_type  TEXT,
+            object_name   TEXT NOT NULL,
+            object_label  TEXT,
+            object_type   TEXT,
+            is_custom     INTEGER DEFAULT 0,
+            is_queryable  INTEGER DEFAULT 1,
+            is_createable INTEGER DEFAULT 1,
+            is_updateable INTEGER DEFAULT 1,
+            is_deletable  INTEGER DEFAULT 1,
+            record_count  INTEGER DEFAULT 0,
+            synced_at     TEXT,
+            UNIQUE(org_domain, object_name)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sf_fields (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_domain      TEXT NOT NULL,
+            object_name     TEXT NOT NULL,
+            field_name      TEXT NOT NULL,
+            field_label     TEXT,
+            field_type      TEXT,
+            is_required     INTEGER DEFAULT 0,
+            is_custom       INTEGER DEFAULT 0,
+            is_createable   INTEGER DEFAULT 1,
+            is_updateable   INTEGER DEFAULT 1,
+            is_nillable     INTEGER DEFAULT 1,
+            max_length      INTEGER,
+            picklist_values TEXT,
+            reference_to    TEXT,
+            default_value   TEXT,
+            UNIQUE(org_domain, object_name, field_name)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sf_packages (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_domain     TEXT NOT NULL,
+            package_name   TEXT,
+            namespace      TEXT,
+            version        TEXT,
+            package_type   TEXT,
+            install_date   TEXT,
+            synced_at      TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sf_apps (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_domain   TEXT NOT NULL,
+            app_name     TEXT,
+            app_label    TEXT,
+            app_type     TEXT,
+            is_default   INTEGER DEFAULT 0,
+            synced_at    TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sf_agents (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_domain    TEXT NOT NULL,
+            agent_name    TEXT,
+            agent_label   TEXT,
+            agent_type    TEXT,
+            channel       TEXT,
             status        TEXT,
             description   TEXT,
-            is_active     INTEGER DEFAULT 0,
-            last_modified TEXT,
-            raw_json      TEXT,
-            synced_at     TEXT,
-            UNIQUE(org_domain, flow_id)
-        );
+            synced_at     TEXT
+        )
+    """)
 
-        CREATE TABLE IF NOT EXISTS sf_apex_triggers (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            org_domain      TEXT NOT NULL,
-            trigger_id      TEXT,
-            name            TEXT,
-            table_enum_or_id TEXT,
-            is_active       INTEGER DEFAULT 1,
-            status          TEXT,
-            body_preview    TEXT,
-            last_modified   TEXT,
-            raw_json        TEXT,
-            synced_at       TEXT,
-            UNIQUE(org_domain, trigger_id)
-        );
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sf_flows (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_domain   TEXT NOT NULL,
+            flow_name    TEXT,
+            flow_label   TEXT,
+            flow_type    TEXT,
+            status       TEXT,
+            object_name  TEXT,
+            synced_at    TEXT
+        )
+    """)
 
-        CREATE TABLE IF NOT EXISTS sf_lightning_components (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            org_domain      TEXT NOT NULL,
-            component_id    TEXT,
-            name            TEXT,
-            api_version     REAL,
-            description     TEXT,
-            is_aura         INTEGER DEFAULT 0,
-            master_label    TEXT,
-            last_modified   TEXT,
-            raw_json        TEXT,
-            synced_at       TEXT,
-            UNIQUE(org_domain, component_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS sf_lightning_apps (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            org_domain      TEXT NOT NULL,
-            app_id          TEXT,
-            name            TEXT,
-            label           TEXT,
-            description     TEXT,
-            is_default      INTEGER DEFAULT 0,
-            form_factors    TEXT,
-            last_modified   TEXT,
-            raw_json        TEXT,
-            synced_at       TEXT,
-            UNIQUE(org_domain, app_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS sf_installed_packages (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            org_domain       TEXT NOT NULL,
-            package_id       TEXT,
-            name             TEXT,
-            namespace_prefix TEXT,
-            version_number   TEXT,
-            version_name     TEXT,
-            publisher        TEXT,
-            install_date     TEXT,
-            raw_json         TEXT,
-            synced_at        TEXT,
-            UNIQUE(org_domain, package_id)
-        );
-
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS sf_validation_rules (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            org_domain      TEXT NOT NULL,
-            rule_id         TEXT,
-            name            TEXT,
-            object_name     TEXT,
-            is_active       INTEGER DEFAULT 1,
-            description     TEXT,
-            error_message   TEXT,
-            raw_json        TEXT,
-            synced_at       TEXT,
-            UNIQUE(org_domain, rule_id)
-        );
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_domain   TEXT NOT NULL,
+            object_name  TEXT,
+            rule_name    TEXT,
+            is_active    INTEGER,
+            description  TEXT,
+            error_msg    TEXT,
+            synced_at    TEXT
+        )
+    """)
 
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS sf_sync_status (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            org_domain      TEXT NOT NULL UNIQUE,
-            last_sync       TEXT,
-            total_objects   INTEGER DEFAULT 0,
-            total_fields    INTEGER DEFAULT 0,
-            total_agents    INTEGER DEFAULT 0,
-            total_flows     INTEGER DEFAULT 0,
-            total_triggers  INTEGER DEFAULT 0,
-            total_components INTEGER DEFAULT 0,
-            total_apps      INTEGER DEFAULT 0,
-            total_packages  INTEGER DEFAULT 0,
-            total_vr        INTEGER DEFAULT 0,
-            sync_duration   TEXT,
-            sync_errors     TEXT,
-            status          TEXT DEFAULT 'pending'
-        );
-        """)
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_domain     TEXT NOT NULL UNIQUE,
+            last_sync      TEXT,
+            total_objects  INTEGER DEFAULT 0,
+            total_fields   INTEGER DEFAULT 0,
+            total_agents   INTEGER DEFAULT 0,
+            total_packages INTEGER DEFAULT 0,
+            total_apps     INTEGER DEFAULT 0,
+            total_flows    INTEGER DEFAULT 0,
+            sync_duration  TEXT,
+            status         TEXT DEFAULT 'never'
+        )
+    """)
+
+    # Migrate existing tables to add missing columns
+    _migrate_sync_status_table(cur)
+
+    conn.commit()
+    conn.close()
 
 
-# ─────────────────────────────────────────────────────────────
-# SYNC STATUS
-# ─────────────────────────────────────────────────────────────
-
-def get_sync_status(org_domain: str) -> dict:
-    """Get the current sync status for an org."""
+def _migrate_sync_status_table(cur):
+    """Add any missing columns to sf_sync_status table"""
     try:
-        with _get_db() as conn:
-            row = conn.execute(
-                "SELECT * FROM sf_sync_status WHERE org_domain=?", (org_domain,)
-            ).fetchone()
-            if row:
-                status_dict = dict(row)
-                # Add computed 'status' field if last_sync exists
-                if status_dict.get('last_sync'):
-                    status_dict['status'] = 'complete'
-                return status_dict
-            return {}
+        cur.execute("PRAGMA table_info(sf_sync_status)")
+        existing = [row[1] for row in cur.fetchall()]
+        migrations = [
+            ("total_apps",
+             "ALTER TABLE sf_sync_status ADD COLUMN total_apps  INTEGER DEFAULT 0"),
+            ("total_flows",
+             "ALTER TABLE sf_sync_status ADD COLUMN total_flows INTEGER DEFAULT 0"),
+        ]
+        for col, sql in migrations:
+            if col not in existing:
+                cur.execute(sql)
     except Exception:
-        return {}
+        pass
 
 
 # ─────────────────────────────────────────────────────────────
-# HELPER FUNCTIONS
+# HELPERS
 # ─────────────────────────────────────────────────────────────
 
-def _upsert_many(conn: sqlite3.Connection, table: str,
-                 conflict_cols: tuple, rows: list):
-    """Generic upsert for a list of dicts into a table."""
-    if not rows:
-        return
-    keys    = list(rows[0].keys())
-    placeholders = ",".join("?" * len(keys))
-    col_list     = ",".join(keys)
-    upd_cols     = [k for k in keys if k not in conflict_cols]
-    upd_clause   = ",".join(f"{k}=excluded.{k}" for k in upd_cols)
-    conflict_str = ",".join(conflict_cols)
-    sql = (
-        f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
-        f"ON CONFLICT({conflict_str}) DO UPDATE SET {upd_clause}"
-    )
-    conn.executemany(sql, [tuple(r[k] for k in keys) for r in rows])
+def _get_headers(sf) -> dict:
+    return {
+        "Authorization": f"Bearer {sf.session_id}",
+        "Content-Type":  "application/json"
+    }
 
 
-# ─────────────────────────────────────────────────────────────
-# INDIVIDUAL SYNC FUNCTIONS
-# ─────────────────────────────────────────────────────────────
-
-def sync_objects_and_fields(sf, org_domain: str,
-                             progress_callback: Optional[Callable] = None,
-                             selected_objects: Optional[List[str]] = None) -> int:
-    """
-    Sync Salesforce objects and their fields.
-    
-    Args:
-        sf: Salesforce connection object
-        org_domain: Organization domain
-        progress_callback: Callback function(msg: str, pct: float)
-        selected_objects: Optional list of object API names to sync. If None, syncs all.
-    
-    Returns:
-        Number of objects synced
-    """
-    now = datetime.utcnow().isoformat()
-
-    def cb(msg, pct=0):
-        if progress_callback:
-            progress_callback(msg, pct)
-
-    cb("Fetching list of all Salesforce objects…", 5)
+def _api_get(sf, endpoint: str, timeout: int = 10) -> tuple:
+    """Make a Salesforce REST API GET call with timeout"""
+    instance = sf.sf_instance
+    if not instance.startswith("https://"):
+        instance = f"https://{instance}"
+    url = f"{instance}{endpoint}"
     try:
-        describe = sf.describe()
-        sobjects = describe.get("sobjects", [])
+        resp = requests.get(
+            url, headers=_get_headers(sf), timeout=timeout
+        )
+        if resp.status_code == 200:
+            return resp.json(), None
+        return None, f"HTTP {resp.status_code}: {resp.text[:100]}"
+    except requests.exceptions.Timeout:
+        return None, "Timeout"
     except Exception as e:
-        cb(f"ERROR fetching objects: {e}", 5)
-        return 0
+        return None, str(e)
 
+
+def _safe_soql(sf, query: str) -> list:
+    """
+    Run a SOQL query safely.
+    Returns empty list on any error — never raises.
+    """
+    try:
+        from connectors.salesforce_connector import run_soql_query
+        records, err = run_soql_query(sf, query)
+        if err or not records:
+            return []
+        return records
+    except Exception:
+        return []
+
+
+# ─────────────────────────────────────────────────────────────
+# DISCOVERY FUNCTIONS
+# ─────────────────────────────────────────────────────────────
+
+def discover_all_objects(sf, org_domain: str,
+                         progress_callback=None,
+                         selected_objects: Optional[List[str]] = None) -> tuple:
+    """
+    Discover ALL objects in the org — standard and custom.
+    If selected_objects is provided, only sync those specific objects.
+    Returns list of object metadata dicts.
+    """
+    data, err = _api_get(sf, "/services/data/v59.0/sobjects/")
+    if err:
+        return [], err
+
+    sobjects   = data.get("sobjects", [])
+    
     # Filter to selected objects if specified
     if selected_objects:
         sobjects = [o for o in sobjects if o.get("name") in selected_objects]
-        cb(f"Filtering to {len(sobjects)} selected objects…", 7)
     
-    cb(f"Found {len(sobjects)} objects. Storing…", 8)
-    obj_rows = []
-    for o in sobjects:
-        obj_rows.append({
-            "org_domain":   org_domain,
-            "api_name":     o.get("name", ""),
-            "label":        o.get("label", ""),
-            "is_custom":    1 if o.get("custom", False) else 0,
-            "is_queryable": 1 if o.get("queryable", True) else 0,
-            "is_createable": 1 if o.get("createable", True) else 0,
-            "key_prefix":   o.get("keyPrefix", ""),
-            "synced_at":    now,
-        })
+    discovered = []
+    conn       = sqlite3.connect(DB_PATH)
+    cur        = conn.cursor()
 
-    with _get_db() as conn:
-        _upsert_many(conn, "sf_objects", ("org_domain", "api_name"), obj_rows)
+    for i, obj in enumerate(sobjects):
+        name = obj.get("name", "")
+        if not name:
+            continue
 
-    # Sync fields for queryable objects
-    queryable = [o for o in sobjects if o.get("queryable", True)]
-    total     = len(queryable)
-    all_fields = []
+        is_custom = name.endswith("__c") or name.endswith("__x")
+        record = {
+            "org_domain":    org_domain,
+            "object_name":   name,
+            "object_label":  obj.get("label", name),
+            "object_type":   "Custom" if is_custom else "Standard",
+            "is_custom":     1 if is_custom else 0,
+            "is_queryable":  1 if obj.get("queryable")  else 0,
+            "is_createable": 1 if obj.get("createable") else 0,
+            "is_updateable": 1 if obj.get("updateable") else 0,
+            "is_deletable":  1 if obj.get("deletable")  else 0,
+            "synced_at":     datetime.now().isoformat()
+        }
 
-    cb(f"Describing fields for {total} queryable objects…", 10)
-    for i, o in enumerate(queryable):
-        pct = 10 + int((i / max(total, 1)) * 30)   # 10–40%
-        if i % 25 == 0 or len(queryable) < 50:
-            cb(f"Describing {o['name']} ({i+1}/{total})…", pct)
-        try:
-            desc = sf.__getattr__(o["name"]).describe()
-            for f in desc.get("fields", []):
-                field_data = {
-                    "org_domain":  org_domain,
-                    "object_name": o["name"],
-                    "api_name":    f.get("name", ""),
-                    "label":       f.get("label", ""),
-                    "field_type":  f.get("type", ""),
-                    "is_custom":   1 if f.get("custom", False) else 0,
-                    "is_required": 1 if (not f.get("nillable", True)
-                                         and not f.get("defaultedOnCreate", False)) else 0,
-                    "max_length":  f.get("length", 0),
-                }
-                
-                # Store picklist values
-                if f.get("type") == "picklist" and f.get("picklistValues"):
-                    values = [pv.get("value") for pv in f.get("picklistValues", [])]
-                    field_data["picklist_values"] = json.dumps(values)
-                
-                all_fields.append(field_data)
-        except Exception:
-            pass
+        cur.execute("""
+            INSERT INTO sf_objects
+            (org_domain, object_name, object_label, object_type,
+             is_custom, is_queryable, is_createable, is_updateable,
+             is_deletable, synced_at)
+            VALUES (:org_domain,:object_name,:object_label,:object_type,
+                    :is_custom,:is_queryable,:is_createable,
+                    :is_updateable,:is_deletable,:synced_at)
+            ON CONFLICT(org_domain, object_name) DO UPDATE SET
+            object_label = excluded.object_label,
+            synced_at    = excluded.synced_at
+        """, record)
+        discovered.append(record)
 
-    with _get_db() as conn:
-        # Insert in batches to avoid lock issues
-        batch = 500
-        for start in range(0, len(all_fields), batch):
-            _upsert_many(conn, "sf_fields",
-                         ("org_domain", "object_name", "api_name"),
-                         all_fields[start:start+batch])
+        if progress_callback and i % 20 == 0:
+            progress_callback(f"Scanning objects: {i}/{len(sobjects)}", int((i/len(sobjects))*10))
 
-    return len(obj_rows)
+    conn.commit()
+    conn.close()
+    return discovered, None
 
 
-def sync_agents(sf, org_domain: str,
-                progress_callback: Optional[Callable] = None) -> int:
-    """Sync Agentforce/Einstein Bot agents via Tooling API."""
-    now = datetime.utcnow().isoformat()
+def discover_object_fields(sf, org_domain: str,
+                           object_name: str) -> tuple:
+    """
+    Discover ALL fields for a specific Salesforce object.
+    Includes type, picklist values, relationships and constraints.
+    """
+    data, err = _api_get(
+        sf,
+        f"/services/data/v59.0/sobjects/{object_name}/describe/",
+        timeout=15
+    )
+    if err:
+        return [], err
 
-    def cb(msg, pct=0):
-        if progress_callback:
-            progress_callback(msg, pct)
+    fields     = data.get("fields", [])
+    discovered = []
+    conn       = sqlite3.connect(DB_PATH)
+    cur        = conn.cursor()
 
-    cb("Syncing Agentforce Agents…", 42)
-    rows = []
-    try:
-        # Try BotDefinition first (Agentforce native type)
-        try:
-            result = sf.toolingexecute(
-                "GET",
-                "tooling/query/?q=SELECT+Id,DeveloperName,MasterLabel,Description,"
-                "BotType,Status,LastModifiedDate+FROM+BotDefinition+LIMIT+200"
-            )
-            records = result.get("records", [])
-        except Exception:
-            records = []
+    for field in fields:
+        fname = field.get("name", "")
+        if not fname:
+            continue
 
-        # Fall back to BotVersion if nothing returned
-        if not records:
-            try:
-                result = sf.toolingexecute(
-                    "GET",
-                    "tooling/query/?q=SELECT+Id,MasterLabel,Description,BotType,"
-                    "Status,LastModifiedDate+FROM+BotVersion+WHERE+IsLatestVersion=true+LIMIT+200"
-                )
-                records = result.get("records", [])
-            except Exception:
-                records = []
+        picklist = [
+            pv.get("value", "")
+            for pv in field.get("picklistValues", [])
+            if pv.get("active")
+        ]
+        refs = [r for r in field.get("referenceTo", []) if r]
 
+        record = {
+            "org_domain":      org_domain,
+            "object_name":     object_name,
+            "field_name":      fname,
+            "field_label":     field.get("label", fname),
+            "field_type":      field.get("type", "string"),
+            "is_required":     0 if field.get("nillable", True) else 1,
+            "is_custom":       1 if fname.endswith("__c") else 0,
+            "is_createable":   1 if field.get("createable") else 0,
+            "is_updateable":   1 if field.get("updateable") else 0,
+            "is_nillable":     1 if field.get("nillable")   else 0,
+            "max_length":      field.get("length", 0),
+            "picklist_values": json.dumps(picklist) if picklist else None,
+            "reference_to":    json.dumps(refs)     if refs     else None,
+            "default_value":   str(field.get("defaultValue","")) or None
+        }
+
+        cur.execute("""
+            INSERT INTO sf_fields
+            (org_domain, object_name, field_name, field_label,
+             field_type, is_required, is_custom, is_createable,
+             is_updateable, is_nillable, max_length,
+             picklist_values, reference_to, default_value)
+            VALUES (:org_domain,:object_name,:field_name,:field_label,
+                    :field_type,:is_required,:is_custom,:is_createable,
+                    :is_updateable,:is_nillable,:max_length,
+                    :picklist_values,:reference_to,:default_value)
+            ON CONFLICT(org_domain, object_name, field_name) DO UPDATE SET
+            field_label     = excluded.field_label,
+            field_type      = excluded.field_type,
+            picklist_values = excluded.picklist_values
+        """, record)
+        discovered.append(record)
+
+    conn.commit()
+    conn.close()
+    return discovered, None
+
+
+def discover_agents(sf, org_domain: str, progress_callback=None) -> tuple:
+    """
+    Discover Agentforce / Einstein AI Agents.
+    Fast-fails silently if org does not have Agentforce enabled.
+    """
+    if progress_callback:
+        progress_callback("Checking for Agentforce / AI Agents...", 42)
+    
+    agents = []
+    conn   = sqlite3.connect(DB_PATH)
+    cur    = conn.cursor()
+
+    agent_queries = [
+        (
+            "SELECT Id, DeveloperName, MasterLabel, Description, Status "
+            "FROM BotDefinition LIMIT 100",
+            "Agentforce", "Chat"
+        ),
+        (
+            "SELECT Id, DeveloperName, MasterLabel, Description "
+            "FROM GenAiApplication LIMIT 100",
+            "GenAI Agent", "Multi-channel"
+        ),
+    ]
+
+    for query, agent_type, channel in agent_queries:
+        records = _safe_soql(sf, query)
         for r in records:
-            rows.append({
-                "org_domain":    org_domain,
-                "agent_id":      r.get("Id", ""),
-                "agent_name":    r.get("MasterLabel") or r.get("DeveloperName", ""),
-                "agent_type":    r.get("BotType", ""),
-                "description":   r.get("Description", "") or "",
-                "is_active":     1 if r.get("Status", "") in ("Active", "Published") else 0,
-                "bot_user_id":   "",
-                "created_by":    "",
-                "last_modified": r.get("LastModifiedDate", ""),
-                "raw_json":      json.dumps(r),
-                "synced_at":     now,
-            })
-
-    except Exception as e:
-        cb(f"Warning — could not sync agents: {e}", 42)
-
-    if rows:
-        with _get_db() as conn:
-            _upsert_many(conn, "sf_agents", ("org_domain", "agent_id"), rows)
-
-    cb(f"✓ {len(rows)} agent(s) synced", 44)
-    return len(rows)
-
-
-def sync_flows(sf, org_domain: str,
-               progress_callback: Optional[Callable] = None) -> int:
-    """Sync all Flow Definitions."""
-    now = datetime.utcnow().isoformat()
-
-    def cb(msg, pct=0):
-        if progress_callback:
-            progress_callback(msg, pct)
-
-    cb("Syncing Flows…", 46)
-    rows = []
-    try:
-        result = sf.toolingexecute(
-            "GET",
-            "tooling/query/?q=SELECT+Id,DeveloperName,MasterLabel,ProcessType,"
-            "ActiveVersionId,Description,LastModifiedDate+FROM+FlowDefinition+LIMIT+500"
-        )
-        for r in result.get("records", []):
-            rows.append({
-                "org_domain":    org_domain,
-                "flow_id":       r.get("Id", ""),
-                "api_name":      r.get("DeveloperName", ""),
-                "label":         r.get("MasterLabel", ""),
-                "process_type":  r.get("ProcessType", ""),
-                "status":        "Active" if r.get("ActiveVersionId") else "Draft",
-                "description":   r.get("Description", "") or "",
-                "is_active":     1 if r.get("ActiveVersionId") else 0,
-                "last_modified": r.get("LastModifiedDate", ""),
-                "raw_json":      json.dumps(r),
-                "synced_at":     now,
-            })
-    except Exception as e:
-        cb(f"Warning — could not sync flows: {e}", 46)
-
-    if rows:
-        with _get_db() as conn:
-            _upsert_many(conn, "sf_flows", ("org_domain", "flow_id"), rows)
-
-    cb(f"✓ {len(rows)} flow(s) synced", 52)
-    return len(rows)
-
-
-def sync_apex_triggers(sf, org_domain: str,
-                        progress_callback: Optional[Callable] = None) -> int:
-    """Sync Apex Triggers."""
-    now = datetime.utcnow().isoformat()
-
-    def cb(msg, pct=0):
-        if progress_callback:
-            progress_callback(msg, pct)
-
-    cb("Syncing Apex Triggers…", 54)
-    rows = []
-    try:
-        result = sf.toolingexecute(
-            "GET",
-            "tooling/query/?q=SELECT+Id,Name,TableEnumOrId,Status,LastModifiedDate+FROM+ApexTrigger+LIMIT+500"
-        )
-        for r in result.get("records", []):
-            rows.append({
-                "org_domain":      org_domain,
-                "trigger_id":      r.get("Id", ""),
-                "name":            r.get("Name", ""),
-                "table_enum_or_id": r.get("TableEnumOrId", ""),
-                "is_active":       1 if r.get("Status") == "Active" else 0,
-                "status":          r.get("Status", ""),
-                "body_preview":    "",
-                "last_modified":   r.get("LastModifiedDate", ""),
-                "raw_json":        json.dumps(r),
-                "synced_at":       now,
-            })
-    except Exception as e:
-        cb(f"Warning — could not sync triggers: {e}", 54)
-
-    if rows:
-        with _get_db() as conn:
-            _upsert_many(conn, "sf_apex_triggers", ("org_domain", "trigger_id"), rows)
-
-    cb(f"✓ {len(rows)} trigger(s) synced", 60)
-    return len(rows)
-
-
-def sync_lightning_components(sf, org_domain: str,
-                               progress_callback: Optional[Callable] = None) -> int:
-    """Sync Lightning Web Components and Aura Components."""
-    now = datetime.utcnow().isoformat()
-
-    def cb(msg, pct=0):
-        if progress_callback:
-            progress_callback(msg, pct)
-
-    cb("Syncing Lightning Components…", 62)
-    rows = []
-    
-    # Try LWC first
-    try:
-        result = sf.toolingexecute(
-            "GET",
-            "tooling/query/?q=SELECT+Id,DeveloperName,MasterLabel,Description,"
-            "ApiVersion,LastModifiedDate+FROM+LightningComponentBundle+LIMIT+500"
-        )
-        for r in result.get("records", []):
-            rows.append({
-                "org_domain":    org_domain,
-                "component_id":  r.get("Id", ""),
-                "name":          r.get("DeveloperName", ""),
-                "api_version":   r.get("ApiVersion", 0.0),
-                "description":   r.get("Description", "") or "",
-                "is_aura":       0,
-                "master_label":  r.get("MasterLabel", ""),
-                "last_modified": r.get("LastModifiedDate", ""),
-                "raw_json":      json.dumps(r),
-                "synced_at":     now,
-            })
-    except Exception as e:
-        cb(f"Warning — could not sync LWC: {e}", 64)
-
-    # Try Aura
-    try:
-        result = sf.toolingexecute(
-            "GET",
-            "tooling/query/?q=SELECT+Id,DeveloperName,MasterLabel,Description,"
-            "ApiVersion,LastModifiedDate+FROM+AuraDefinitionBundle+LIMIT+500"
-        )
-        for r in result.get("records", []):
-            rows.append({
-                "org_domain":    org_domain,
-                "component_id":  r.get("Id", ""),
-                "name":          r.get("DeveloperName", ""),
-                "api_version":   r.get("ApiVersion", 0.0),
-                "description":   r.get("Description", "") or "",
-                "is_aura":       1,
-                "master_label":  r.get("MasterLabel", ""),
-                "last_modified": r.get("LastModifiedDate", ""),
-                "raw_json":      json.dumps(r),
-                "synced_at":     now,
-            })
-    except Exception as e:
-        cb(f"Warning — could not sync Aura: {e}", 66)
-
-    if rows:
-        with _get_db() as conn:
-            _upsert_many(conn, "sf_lightning_components", ("org_domain", "component_id"), rows)
-
-    cb(f"✓ {len(rows)} component(s) synced", 68)
-    return len(rows)
-
-
-def sync_lightning_apps(sf, org_domain: str,
-                        progress_callback: Optional[Callable] = None) -> int:
-    """Sync Lightning Apps."""
-    now = datetime.utcnow().isoformat()
-
-    def cb(msg, pct=0):
-        if progress_callback:
-            progress_callback(msg, pct)
-
-    cb("Syncing Lightning Apps…", 70)
-    rows = []
-    try:
-        result = sf.toolingexecute(
-            "GET",
-            "tooling/query/?q=SELECT+Id,DeveloperName,MasterLabel,Description,"
-            "FormFactors,LastModifiedDate+FROM+AppDefinition+LIMIT+200"
-        )
-        for r in result.get("records", []):
-            rows.append({
-                "org_domain":    org_domain,
-                "app_id":        r.get("Id", ""),
-                "name":          r.get("DeveloperName", ""),
-                "label":         r.get("MasterLabel", ""),
-                "description":   r.get("Description", "") or "",
-                "is_default":    0,
-                "form_factors":  r.get("FormFactors", ""),
-                "last_modified": r.get("LastModifiedDate", ""),
-                "raw_json":      json.dumps(r),
-                "synced_at":     now,
-            })
-    except Exception as e:
-        cb(f"Warning — could not sync apps: {e}", 70)
-
-    if rows:
-        with _get_db() as conn:
-            _upsert_many(conn, "sf_lightning_apps", ("org_domain", "app_id"), rows)
-
-    cb(f"✓ {len(rows)} app(s) synced", 74)
-    return len(rows)
-
-
-def sync_installed_packages(sf, org_domain: str,
-                             progress_callback: Optional[Callable] = None) -> int:
-    """Sync installed managed packages."""
-    now = datetime.utcnow().isoformat()
-
-    def cb(msg, pct=0):
-        if progress_callback:
-            progress_callback(msg, pct)
-
-    cb("Syncing Installed Packages…", 76)
-    rows = []
-    
-    # Try InstalledSubscriberPackage first
-    try:
-        result = sf.toolingexecute(
-            "GET",
-            "tooling/query/?q=SELECT+Id,SubscriberPackageId,SubscriberPackage.Name,"
-            "SubscriberPackage.NamespacePrefix,SubscriberPackageVersion.Name,"
-            "SubscriberPackageVersion.MajorVersion,SubscriberPackageVersion.MinorVersion,"
-            "SubscriberPackageVersion.PatchVersion,SubscriberPackageVersion.BuildNumber+"
-            "FROM+InstalledSubscriberPackage+LIMIT+200"
-        )
-        for r in result.get("records", []):
-            pkg = r.get("SubscriberPackage", {}) or {}
-            ver = r.get("SubscriberPackageVersion", {}) or {}
-            version = f"{ver.get('MajorVersion',0)}.{ver.get('MinorVersion',0)}.{ver.get('PatchVersion',0)}"
-            rows.append({
-                "org_domain":       org_domain,
-                "package_id":       r.get("SubscriberPackageId", ""),
-                "name":             pkg.get("Name", ""),
-                "namespace_prefix": pkg.get("NamespacePrefix", "") or "",
-                "version_number":   version,
-                "version_name":     ver.get("Name", ""),
-                "publisher":        "",
-                "install_date":     "",
-                "raw_json":         json.dumps(r),
-                "synced_at":        now,
-            })
-    except Exception as e1:
-        cb(f"Trying alternate package query…", 78)
-        # Fallback to PackageSubscriber
-        try:
-            result = sf.query_all(
-                "SELECT Id,SubscriberPackageName,SubscriberPackageNamespace,"
-                "SubscriberPackageVersionNumber,SubscriberPackageVersionName "
-                "FROM PackageSubscriber LIMIT 200"
-            )
-            for r in result.get("records", []):
-                rows.append({
-                    "org_domain":       org_domain,
-                    "package_id":       r.get("Id", ""),
-                    "name":             r.get("SubscriberPackageName", ""),
-                    "namespace_prefix": r.get("SubscriberPackageNamespace", "") or "",
-                    "version_number":   r.get("SubscriberPackageVersionNumber", ""),
-                    "version_name":     r.get("SubscriberPackageVersionName", "") or "",
-                    "publisher":        "",
-                    "install_date":     "",
-                    "raw_json":         json.dumps(r),
-                    "synced_at":        now,
-                })
-        except Exception as e2:
-            cb(f"Warning — could not sync packages: {e2}", 78)
-
-    if rows:
-        with _get_db() as conn:
-            _upsert_many(conn, "sf_installed_packages",
-                         ("org_domain", "package_id"), rows)
-
-    cb(f"✓ {len(rows)} package(s) synced", 82)
-    return len(rows)
-
-
-def sync_validation_rules(sf, org_domain: str,
-                           progress_callback: Optional[Callable] = None) -> int:
-    """Sync validation rules via Tooling API."""
-    now = datetime.utcnow().isoformat()
-
-    def cb(msg, pct=0):
-        if progress_callback:
-            progress_callback(msg, pct)
-
-    cb("Syncing Validation Rules…", 84)
-    rows = []
-    try:
-        result  = sf.toolingexecute(
-            "GET",
-            "tooling/query/?q=SELECT+Id,ValidationName,EntityDefinition.QualifiedApiName,"
-            "Active,Description,ErrorMessage,LastModifiedDate+FROM+ValidationRule+LIMIT+1000"
-        )
-        for r in result.get("records", []):
-            entity = r.get("EntityDefinition") or {}
-            rows.append({
-                "org_domain":   org_domain,
-                "rule_id":      r.get("Id", ""),
-                "name":         r.get("ValidationName", ""),
-                "object_name":  entity.get("QualifiedApiName", ""),
-                "is_active":    1 if r.get("Active", False) else 0,
-                "description":  (r.get("Description") or ""),
-                "error_message": (r.get("ErrorMessage") or ""),
-                "raw_json":     json.dumps(r),
-                "synced_at":    now,
-            })
-    except Exception as e:
-        cb(f"Warning — could not sync validation rules: {e}", 84)
-
-    if rows:
-        with _get_db() as conn:
-            _upsert_many(conn, "sf_validation_rules",
-                         ("org_domain", "rule_id"), rows)
-
-    cb(f"✓ {len(rows)} validation rule(s) synced", 90)
-    return len(rows)
-
-
-# ─────────────────────────────────────────────────────────────
-# MAIN SYNC FUNCTIONS
-# ─────────────────────────────────────────────────────────────
-
-def sync_full_org_metadata(sf, org_domain: str,
-                           progress_callback: Optional[Callable] = None,
-                           **kwargs):
-    """
-    Run a complete metadata sync for the given Salesforce org.
-
-    progress_callback signature: callback(msg: str, pct: float)
-    Both arguments are always provided.
-
-    Syncs (in order):
-      1. Objects & Fields
-      2. Agentforce Agents
-      3. Flows
-      4. Apex Triggers
-      5. Lightning Components (LWC + Aura)
-      6. Lightning Apps
-      7. Installed Packages
-      8. Validation Rules
-      
-    Returns:
-        dict: Counts of all synced metadata types
-    """
-    start_time = datetime.utcnow()
-
-    def log(msg: str, pct: float = 0.0):
-        """Safe wrapper — always calls callback with both args."""
-        if progress_callback:
+            agent = {
+                "org_domain":  org_domain,
+                "agent_name":  r.get("DeveloperName", ""),
+                "agent_label": r.get("MasterLabel", ""),
+                "agent_type":  agent_type,
+                "channel":     channel,
+                "status":      r.get("Status", "Active"),
+                "description": r.get("Description", ""),
+                "synced_at":   datetime.now().isoformat()
+            }
             try:
-                progress_callback(msg, pct)
+                cur.execute("""
+                    INSERT INTO sf_agents
+                    (org_domain, agent_name, agent_label,
+                     agent_type, channel, status, description, synced_at)
+                    VALUES (:org_domain,:agent_name,:agent_label,
+                            :agent_type,:channel,:status,
+                            :description,:synced_at)
+                """, agent)
+                agents.append(agent)
             except Exception:
                 pass
 
+    conn.commit()
+    conn.close()
+    
+    if progress_callback:
+        progress_callback(f"✓ {len(agents)} agent(s) synced", 44)
+    
+    return agents, None
+
+
+def discover_installed_packages(sf, org_domain: str, progress_callback=None) -> tuple:
+    """
+    Discover all installed managed packages.
+    Fast-fails silently if none exist.
+    """
+    if progress_callback:
+        progress_callback("Checking installed packages...", 76)
+    
+    packages = []
+    conn     = sqlite3.connect(DB_PATH)
+    cur      = conn.cursor()
+
+    records = _safe_soql(
+        sf,
+        "SELECT Id, SubscriberPackage.Name, "
+        "SubscriberPackage.NamespacePrefix, "
+        "SubscriberPackageVersion.MajorVersion, "
+        "SubscriberPackageVersion.MinorVersion "
+        "FROM InstalledSubscriberPackage LIMIT 200"
+    )
+
+    for r in records:
+        pkg = r.get("SubscriberPackage") or {}
+        ver = r.get("SubscriberPackageVersion") or {}
+        package = {
+            "org_domain":   org_domain,
+            "package_name": pkg.get("Name", ""),
+            "namespace":    pkg.get("NamespacePrefix", ""),
+            "version": (
+                f"{ver.get('MajorVersion','')}"
+                f".{ver.get('MinorVersion','')}"
+                if ver else ""
+            ),
+            "package_type": "Managed",
+            "synced_at":    datetime.now().isoformat()
+        }
+        try:
+            cur.execute("""
+                INSERT INTO sf_packages
+                (org_domain, package_name, namespace,
+                 version, package_type, synced_at)
+                VALUES (:org_domain,:package_name,:namespace,
+                        :version,:package_type,:synced_at)
+            """, package)
+            packages.append(package)
+        except Exception:
+            pass
+
+    conn.commit()
+    conn.close()
+    
+    if progress_callback:
+        progress_callback(f"✓ {len(packages)} package(s) synced", 82)
+    
+    return packages, None
+
+
+def discover_custom_apps(sf, org_domain: str, progress_callback=None) -> tuple:
+    """
+    Discover all Lightning apps.
+    Fast-fails silently if AppDefinition not available.
+    """
+    if progress_callback:
+        progress_callback("Checking custom apps...", 70)
+    
+    apps = []
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+
+    records = _safe_soql(
+        sf,
+        "SELECT Id, DeveloperName, Label, IsDefault, Type "
+        "FROM AppDefinition LIMIT 200"
+    )
+
+    for r in records:
+        app = {
+            "org_domain": org_domain,
+            "app_name":   r.get("DeveloperName", ""),
+            "app_label":  r.get("Label", ""),
+            "app_type":   r.get("Type", "Standard"),
+            "is_default": 1 if r.get("IsDefault") else 0,
+            "synced_at":  datetime.now().isoformat()
+        }
+        try:
+            cur.execute("""
+                INSERT INTO sf_apps
+                (org_domain, app_name, app_label,
+                 app_type, is_default, synced_at)
+                VALUES (:org_domain,:app_name,:app_label,
+                        :app_type,:is_default,:synced_at)
+            """, app)
+            apps.append(app)
+        except Exception:
+            pass
+
+    conn.commit()
+    conn.close()
+    
+    if progress_callback:
+        progress_callback(f"✓ {len(apps)} app(s) synced", 74)
+    
+    return apps, None
+
+
+def discover_flows(sf, org_domain: str, progress_callback=None) -> tuple:
+    """
+    Discover all active Flows and Process Automations.
+    Fast-fails silently if not accessible.
+    """
+    if progress_callback:
+        progress_callback("Checking flows and automations...", 46)
+    
+    flows = []
+    conn  = sqlite3.connect(DB_PATH)
+    cur   = conn.cursor()
+
+    records = _safe_soql(
+        sf,
+        "SELECT Id, ApiName, Label, ProcessType, Status "
+        "FROM FlowDefinitionView "
+        "WHERE Status != 'Obsolete' LIMIT 200"
+    )
+
+    for r in records:
+        flow = {
+            "org_domain":  org_domain,
+            "flow_name":   r.get("ApiName", ""),
+            "flow_label":  r.get("Label", ""),
+            "flow_type":   r.get("ProcessType", ""),
+            "status":      r.get("Status", ""),
+            "object_name": "",
+            "synced_at":   datetime.now().isoformat()
+        }
+        try:
+            cur.execute("""
+                INSERT INTO sf_flows
+                (org_domain, flow_name, flow_label,
+                 flow_type, status, object_name, synced_at)
+                VALUES (:org_domain,:flow_name,:flow_label,
+                        :flow_type,:status,:object_name,:synced_at)
+            """, flow)
+            flows.append(flow)
+        except Exception:
+            pass
+
+    conn.commit()
+    conn.close()
+    
+    if progress_callback:
+        progress_callback(f"✓ {len(flows)} flow(s) synced", 52)
+    
+    return flows, None
+
+
+# ─────────────────────────────────────────────────────────────
+# FULL ORG SYNC
+# ─────────────────────────────────────────────────────────────
+
+def sync_full_org_metadata(sf, org_domain: str,
+                            progress_callback=None,
+                            objects_to_detail: int = 60) -> dict:
+    """
+    Full org metadata sync.
+    Discovers objects, fields, agents, packages, apps and flows.
+    Each step fast-fails gracefully — never hangs.
+    """
     init_metadata_db()
-    errors = []
-    counts = {
-        "total_objects":    0,
-        "total_fields":     0,
-        "total_agents":     0,
-        "total_flows":      0,
-        "total_triggers":   0,
-        "total_components": 0,
-        "total_apps":       0,
-        "total_packages":   0,
-        "total_vr":         0,
+    start = datetime.now()
+
+    def log(msg, pct=0):
+        if progress_callback:
+            progress_callback(msg, pct)
+
+    summary = {
+        "org_domain": org_domain,
+        "objects":    0,
+        "fields":     0,
+        "agents":     0,
+        "packages":   0,
+        "apps":       0,
+        "flows":      0,
+        "errors":     [],
+        "started_at": start.isoformat()
     }
 
-    log("Starting full org metadata sync…", 1)
+    # 1 — Discover all objects
+    log("Scanning all Salesforce objects...", 5)
+    objects, err = discover_all_objects(sf, org_domain, log)
+    if err:
+        summary["errors"].append(f"Objects: {err}")
+    else:
+        summary["objects"] = len(objects)
+        log(f"Found {len(objects)} objects", 10)
 
-    # ── Step 1: Objects & Fields (10–40%) ─────────────────────
-    try:
-        log("Scanning all Salesforce objects…", 5)
-        n_obj = sync_objects_and_fields(sf, org_domain, progress_callback)
-        counts["total_objects"] = n_obj
+    # 2 — Pull field details for priority objects first
+    priority_objects = [
+        "Contact", "Account", "Lead", "Opportunity", "Case",
+        "Task", "Event", "Campaign", "Contract", "Order",
+        "Product2", "Asset", "Quote", "User"
+    ]
 
-        with _get_db() as conn:
-            counts["total_fields"] = conn.execute(
-                "SELECT COUNT(*) FROM sf_fields WHERE org_domain=?",
-                (org_domain,)
-            ).fetchone()[0]
+    custom_objects = [
+        o["object_name"] for o in objects
+        if o.get("is_custom")
+        and o.get("is_queryable")
+        and not any(o["object_name"].endswith(s) for s in [
+            "__History", "__Share", "__Feed",
+            "__Tag", "__ChangeEvent"
+        ])
+    ]
 
-        log(f"✓ {n_obj} objects + {counts['total_fields']} fields synced", 40)
-    except Exception as e:
-        errors.append(f"Objects/Fields: {e}")
-        log(f"ERROR syncing objects: {e}", 40)
+    other_objects = [
+        o["object_name"] for o in objects
+        if o["object_name"] not in priority_objects
+        and o["object_name"] not in custom_objects
+        and o.get("is_queryable")
+    ]
 
-    # ── Step 2: Agents (42–44%) ────────────────────────────────
-    try:
-        counts["total_agents"] = sync_agents(sf, org_domain, progress_callback)
-    except Exception as e:
-        errors.append(f"Agents: {e}")
-        log(f"ERROR syncing agents: {e}", 44)
+    detail_list = (
+        priority_objects
+        + custom_objects[:30]
+        + other_objects
+    )[:objects_to_detail]
 
-    # ── Step 3: Flows (46–52%) ─────────────────────────────────
-    try:
-        counts["total_flows"] = sync_flows(sf, org_domain, progress_callback)
-    except Exception as e:
-        errors.append(f"Flows: {e}")
-        log(f"ERROR syncing flows: {e}", 52)
+    log(f"Pulling field details for {len(detail_list)} objects...", 15)
+    total_fields = 0
 
-    # ── Step 4: Triggers (54–60%) ──────────────────────────────
-    try:
-        counts["total_triggers"] = sync_apex_triggers(sf, org_domain, progress_callback)
-    except Exception as e:
-        errors.append(f"Triggers: {e}")
-        log(f"ERROR syncing triggers: {e}", 60)
+    for i, obj_name in enumerate(detail_list):
+        pct = 15 + int((i / len(detail_list)) * 25)  # 15-40%
+        log(f"Fields ({i+1}/{len(detail_list)}): {obj_name}", pct)
+        fields, err = discover_object_fields(sf, org_domain, obj_name)
+        if not err:
+            total_fields += len(fields)
 
-    # ── Step 5: Lightning Components (62–68%) ─────────────────
-    try:
-        counts["total_components"] = sync_lightning_components(
-            sf, org_domain, progress_callback)
-    except Exception as e:
-        errors.append(f"LightningComponents: {e}")
-        log(f"ERROR syncing components: {e}", 68)
+    summary["fields"] = total_fields
+    log(f"Discovered {total_fields} fields across {len(detail_list)} objects", 40)
 
-    # ── Step 6: Lightning Apps (70–74%) ───────────────────────
-    try:
-        counts["total_apps"] = sync_lightning_apps(sf, org_domain, progress_callback)
-    except Exception as e:
-        errors.append(f"LightningApps: {e}")
-        log(f"ERROR syncing apps: {e}", 74)
+    # 3 — Agents
+    agents, _ = discover_agents(sf, org_domain, log)
+    summary["agents"] = len(agents)
 
-    # ── Step 7: Installed Packages (76–82%) ───────────────────
-    try:
-        counts["total_packages"] = sync_installed_packages(
-            sf, org_domain, progress_callback)
-    except Exception as e:
-        errors.append(f"Packages: {e}")
-        log(f"ERROR syncing packages: {e}", 82)
+    # 4 — Flows
+    flows, _ = discover_flows(sf, org_domain, log)
+    summary["flows"] = len(flows)
 
-    # ── Step 8: Validation Rules (84–90%) ─────────────────────
-    try:
-        counts["total_vr"] = sync_validation_rules(sf, org_domain, progress_callback)
-    except Exception as e:
-        errors.append(f"ValidationRules: {e}")
-        log(f"ERROR syncing validation rules: {e}", 90)
+    # 5 — Apps
+    apps, _ = discover_custom_apps(sf, org_domain, log)
+    summary["apps"] = len(apps)
 
-    # ── Save sync status (95%) ─────────────────────────────────
-    end_time = datetime.utcnow()
-    duration = str(end_time - start_time).split('.')[0]  # Remove microseconds
-    
-    log("Saving sync status…", 95)
-    try:
-        with _get_db() as conn:
-            conn.execute("""
-                INSERT INTO sf_sync_status
-                    (org_domain, last_sync, total_objects, total_fields,
-                     total_agents, total_flows, total_triggers,
-                     total_components, total_apps, total_packages,
-                     total_vr, sync_duration, sync_errors, status)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(org_domain) DO UPDATE SET
-                    last_sync        = excluded.last_sync,
-                    total_objects    = excluded.total_objects,
-                    total_fields     = excluded.total_fields,
-                    total_agents     = excluded.total_agents,
-                    total_flows      = excluded.total_flows,
-                    total_triggers   = excluded.total_triggers,
-                    total_components = excluded.total_components,
-                    total_apps       = excluded.total_apps,
-                    total_packages   = excluded.total_packages,
-                    total_vr         = excluded.total_vr,
-                    sync_duration    = excluded.sync_duration,
-                    sync_errors      = excluded.sync_errors,
-                    status           = excluded.status
-            """, (
-                org_domain,
-                datetime.utcnow().isoformat(),
-                counts["total_objects"],
-                counts["total_fields"],
-                counts["total_agents"],
-                counts["total_flows"],
-                counts["total_triggers"],
-                counts["total_components"],
-                counts["total_apps"],
-                counts["total_packages"],
-                counts["total_vr"],
-                duration,
-                "; ".join(errors) if errors else "",
-                "complete"
-            ))
-    except Exception as e:
-        log(f"ERROR saving sync status: {e}", 95)
+    # 6 — Packages
+    packages, _ = discover_installed_packages(sf, org_domain, log)
+    summary["packages"] = len(packages)
 
-    summary = (
-        f"✅ Sync complete — "
-        f"{counts['total_objects']} objects, "
-        f"{counts['total_fields']} fields, "
-        f"{counts['total_agents']} agents, "
-        f"{counts['total_flows']} flows, "
-        f"{counts['total_triggers']} triggers, "
-        f"{counts['total_components']} components, "
-        f"{counts['total_apps']} apps, "
-        f"{counts['total_packages']} packages, "
-        f"{counts['total_vr']} validation rules"
-    )
-    log(summary, 100)
-    return counts
+    # Save sync status
+    duration             = str(datetime.now() - start).split(".")[0]
+    summary["sync_duration"] = duration
+    summary["completed_at"]  = datetime.now().isoformat()
 
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        INSERT INTO sf_sync_status
+        (org_domain, last_sync, total_objects, total_fields,
+         total_agents, total_packages, total_apps, total_flows,
+         sync_duration, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'complete')
+        ON CONFLICT(org_domain) DO UPDATE SET
+        last_sync      = excluded.last_sync,
+        total_objects  = excluded.total_objects,
+        total_fields   = excluded.total_fields,
+        total_agents   = excluded.total_agents,
+        total_packages = excluded.total_packages,
+        total_apps     = excluded.total_apps,
+        total_flows    = excluded.total_flows,
+        sync_duration  = excluded.sync_duration,
+        status         = 'complete'
+    """, (
+        org_domain,
+        datetime.now().isoformat(),
+        summary["objects"],
+        summary["fields"],
+        summary["agents"],
+        summary["packages"],
+        summary["apps"],
+        summary["flows"],
+        duration
+    ))
+    conn.commit()
+    conn.close()
+
+    log(f"Sync complete in {duration}", 100)
+    return summary
+
+
+# ─────────────────────────────────────────────────────────────
+# SELECTIVE SYNC FUNCTION (NEW)
+# ─────────────────────────────────────────────────────────────
 
 def selective_sync_metadata(sf, org_domain: str,
                             metadata_types: List[str],
                             progress_callback: Optional[Callable] = None,
-                            selected_objects: Optional[List[str]] = None):
+                            selected_objects: Optional[List[str]] = None) -> dict:
     """
     Selectively sync specific metadata types.
     
     Args:
         sf: Salesforce connection
         org_domain: Organization domain
-        metadata_types: List of metadata types to sync. Options:
+        metadata_types: List of types to sync. Options:
             - 'objects': Sync objects and fields
             - 'agents': Sync Agentforce agents
             - 'flows': Sync flows
-            - 'triggers': Sync Apex triggers
-            - 'components': Sync Lightning components
             - 'apps': Sync Lightning apps
             - 'packages': Sync installed packages
-            - 'validation_rules': Sync validation rules
         progress_callback: Callback function(msg: str, pct: float)
-        selected_objects: Optional list of specific object API names (only used if 'objects' in metadata_types)
+        selected_objects: Optional list of specific object names (only used if 'objects' in metadata_types)
     
     Returns:
         dict: Counts of synced metadata
     """
-    start_time = datetime.utcnow()
-    
-    def log(msg: str, pct: float = 0.0):
-        if progress_callback:
-            try:
-                progress_callback(msg, pct)
-            except Exception:
-                pass
-
     init_metadata_db()
-    errors = []
-    counts = {
+    start = datetime.now()
+
+    def log(msg, pct=0):
+        if progress_callback:
+            progress_callback(msg, pct)
+
+    summary = {
         "total_objects": 0,
         "total_fields": 0,
         "total_agents": 0,
         "total_flows": 0,
-        "total_triggers": 0,
-        "total_components": 0,
         "total_apps": 0,
         "total_packages": 0,
-        "total_vr": 0,
     }
-    
-    log("Starting selective metadata sync…", 1)
-    
-    # Calculate progress increments based on selected types
+
+    log("Starting selective metadata sync...", 1)
+
+    # Calculate progress increments
     num_types = len(metadata_types)
     pct_per_type = 90 / max(num_types, 1)
     current_pct = 5
-    
+
     # Sync each selected type
     if 'objects' in metadata_types:
-        try:
-            log("Syncing objects and fields…", current_pct)
-            n_obj = sync_objects_and_fields(sf, org_domain, progress_callback, selected_objects)
-            counts["total_objects"] = n_obj
+        log("Syncing objects and fields...", current_pct)
+        objects, err = discover_all_objects(sf, org_domain, log, selected_objects)
+        if not err:
+            summary["total_objects"] = len(objects)
             
-            with _get_db() as conn:
-                counts["total_fields"] = conn.execute(
-                    "SELECT COUNT(*) FROM sf_fields WHERE org_domain=?",
-                    (org_domain,)
-                ).fetchone()[0]
+            # Sync fields for the objects
+            log(f"Syncing fields for {len(objects)} objects...", current_pct + 5)
+            total_fields = 0
+            for i, obj in enumerate(objects):
+                if obj.get("is_queryable"):
+                    fields, _ = discover_object_fields(sf, org_domain, obj["object_name"])
+                    if fields:
+                        total_fields += len(fields)
             
-            log(f"✓ {n_obj} objects + {counts['total_fields']} fields synced", current_pct + pct_per_type)
-        except Exception as e:
-            errors.append(f"Objects: {e}")
+            summary["total_fields"] = total_fields
+            log(f"✓ {len(objects)} objects + {total_fields} fields synced", current_pct + pct_per_type)
         current_pct += pct_per_type
-    
+
     if 'agents' in metadata_types:
-        try:
-            counts["total_agents"] = sync_agents(sf, org_domain, progress_callback)
-        except Exception as e:
-            errors.append(f"Agents: {e}")
+        agents, _ = discover_agents(sf, org_domain, log)
+        summary["total_agents"] = len(agents)
         current_pct += pct_per_type
-    
+
     if 'flows' in metadata_types:
-        try:
-            counts["total_flows"] = sync_flows(sf, org_domain, progress_callback)
-        except Exception as e:
-            errors.append(f"Flows: {e}")
+        flows, _ = discover_flows(sf, org_domain, log)
+        summary["total_flows"] = len(flows)
         current_pct += pct_per_type
-    
-    if 'triggers' in metadata_types:
-        try:
-            counts["total_triggers"] = sync_apex_triggers(sf, org_domain, progress_callback)
-        except Exception as e:
-            errors.append(f"Triggers: {e}")
-        current_pct += pct_per_type
-    
-    if 'components' in metadata_types:
-        try:
-            counts["total_components"] = sync_lightning_components(sf, org_domain, progress_callback)
-        except Exception as e:
-            errors.append(f"Components: {e}")
-        current_pct += pct_per_type
-    
+
     if 'apps' in metadata_types:
-        try:
-            counts["total_apps"] = sync_lightning_apps(sf, org_domain, progress_callback)
-        except Exception as e:
-            errors.append(f"Apps: {e}")
+        apps, _ = discover_custom_apps(sf, org_domain, log)
+        summary["total_apps"] = len(apps)
         current_pct += pct_per_type
-    
+
     if 'packages' in metadata_types:
-        try:
-            counts["total_packages"] = sync_installed_packages(sf, org_domain, progress_callback)
-        except Exception as e:
-            errors.append(f"Packages: {e}")
+        packages, _ = discover_installed_packages(sf, org_domain, log)
+        summary["total_packages"] = len(packages)
         current_pct += pct_per_type
-    
-    if 'validation_rules' in metadata_types:
-        try:
-            counts["total_vr"] = sync_validation_rules(sf, org_domain, progress_callback)
-        except Exception as e:
-            errors.append(f"Validation Rules: {e}")
-        current_pct += pct_per_type
-    
+
     # Save sync status
-    end_time = datetime.utcnow()
-    duration = str(end_time - start_time).split('.')[0]
+    duration = str(datetime.now() - start).split(".")[0]
     
-    log("Saving sync status…", 95)
-    try:
-        with _get_db() as conn:
-            conn.execute("""
-                INSERT INTO sf_sync_status
-                    (org_domain, last_sync, total_objects, total_fields,
-                     total_agents, total_flows, total_triggers,
-                     total_components, total_apps, total_packages,
-                     total_vr, sync_duration, sync_errors, status)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(org_domain) DO UPDATE SET
-                    last_sync        = excluded.last_sync,
-                    total_objects    = COALESCE(excluded.total_objects, sf_sync_status.total_objects),
-                    total_fields     = COALESCE(excluded.total_fields, sf_sync_status.total_fields),
-                    total_agents     = COALESCE(excluded.total_agents, sf_sync_status.total_agents),
-                    total_flows      = COALESCE(excluded.total_flows, sf_sync_status.total_flows),
-                    total_triggers   = COALESCE(excluded.total_triggers, sf_sync_status.total_triggers),
-                    total_components = COALESCE(excluded.total_components, sf_sync_status.total_components),
-                    total_apps       = COALESCE(excluded.total_apps, sf_sync_status.total_apps),
-                    total_packages   = COALESCE(excluded.total_packages, sf_sync_status.total_packages),
-                    total_vr         = COALESCE(excluded.total_vr, sf_sync_status.total_vr),
-                    sync_duration    = excluded.sync_duration,
-                    sync_errors      = excluded.sync_errors,
-                    status           = excluded.status
-            """, (
-                org_domain,
-                datetime.utcnow().isoformat(),
-                counts["total_objects"] or None,
-                counts["total_fields"] or None,
-                counts["total_agents"] or None,
-                counts["total_flows"] or None,
-                counts["total_triggers"] or None,
-                counts["total_components"] or None,
-                counts["total_apps"] or None,
-                counts["total_packages"] or None,
-                counts["total_vr"] or None,
-                duration,
-                "; ".join(errors) if errors else "",
-                "complete"
-            ))
-    except Exception as e:
-        log(f"ERROR saving sync status: {e}", 95)
+    log("Saving sync status...", 95)
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        INSERT INTO sf_sync_status
+        (org_domain, last_sync, total_objects, total_fields,
+         total_agents, total_packages, total_apps, total_flows,
+         sync_duration, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'complete')
+        ON CONFLICT(org_domain) DO UPDATE SET
+        last_sync      = excluded.last_sync,
+        total_objects  = COALESCE(excluded.total_objects, sf_sync_status.total_objects),
+        total_fields   = COALESCE(excluded.total_fields, sf_sync_status.total_fields),
+        total_agents   = COALESCE(excluded.total_agents, sf_sync_status.total_agents),
+        total_packages = COALESCE(excluded.total_packages, sf_sync_status.total_packages),
+        total_apps     = COALESCE(excluded.total_apps, sf_sync_status.total_apps),
+        total_flows    = COALESCE(excluded.total_flows, sf_sync_status.total_flows),
+        sync_duration  = excluded.sync_duration,
+        status         = 'complete'
+    """, (
+        org_domain,
+        datetime.now().isoformat(),
+        summary["total_objects"] or 0,
+        summary["total_fields"] or 0,
+        summary["total_agents"] or 0,
+        summary["total_packages"] or 0,
+        summary["total_apps"] or 0,
+        summary["total_flows"] or 0,
+        duration
+    ))
+    conn.commit()
+    conn.close()
+
+    parts = []
+    if summary["total_objects"]: parts.append(f"{summary['total_objects']} objects")
+    if summary["total_fields"]: parts.append(f"{summary['total_fields']} fields")
+    if summary["total_agents"]: parts.append(f"{summary['total_agents']} agents")
+    if summary["total_flows"]: parts.append(f"{summary['total_flows']} flows")
+    if summary["total_apps"]: parts.append(f"{summary['total_apps']} apps")
+    if summary["total_packages"]: parts.append(f"{summary['total_packages']} packages")
     
-    summary_parts = []
-    if counts["total_objects"]: summary_parts.append(f"{counts['total_objects']} objects")
-    if counts["total_fields"]: summary_parts.append(f"{counts['total_fields']} fields")
-    if counts["total_agents"]: summary_parts.append(f"{counts['total_agents']} agents")
-    if counts["total_flows"]: summary_parts.append(f"{counts['total_flows']} flows")
-    if counts["total_triggers"]: summary_parts.append(f"{counts['total_triggers']} triggers")
-    if counts["total_components"]: summary_parts.append(f"{counts['total_components']} components")
-    if counts["total_apps"]: summary_parts.append(f"{counts['total_apps']} apps")
-    if counts["total_packages"]: summary_parts.append(f"{counts['total_packages']} packages")
-    if counts["total_vr"]: summary_parts.append(f"{counts['total_vr']} validation rules")
-    
-    summary = f"✅ Selective sync complete — {', '.join(summary_parts)}"
-    log(summary, 100)
-    return counts
+    summary_msg = f"✅ Selective sync complete — {', '.join(parts)}" if parts else "✅ Sync complete"
+    log(summary_msg, 100)
+    return summary
 
 
 # ─────────────────────────────────────────────────────────────
-# READ HELPERS (used by Metadata Explorer page)
+# METADATA QUERY FUNCTIONS — Used by Test Runner
 # ─────────────────────────────────────────────────────────────
 
-def get_org_objects(org_domain: str) -> list:
-    """Get all objects for an org."""
-    try:
-        with _get_db() as conn:
-            rows = conn.execute(
-                "SELECT api_name as object_name, label as object_label, "
-                "is_custom, is_queryable, is_createable "
-                "FROM sf_objects WHERE org_domain=? ORDER BY api_name",
-                (org_domain,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
+# Fields that should NEVER be sent when creating a record
+SYSTEM_EXCLUDED_FIELDS = {
+    'Id', 'OwnerId', 'CreatedDate', 'CreatedById',
+    'LastModifiedDate', 'LastModifiedById',
+    'SystemModstamp', 'IsDeleted', 'LastActivityDate',
+    'LastViewedDate', 'LastReferencedDate',
+    'MasterRecordId', 'IsEmailBounced',
+    'EmailBouncedDate', 'EmailBouncedReason',
+    'Jigsaw', 'JigsawContactId', 'IndividualId',
+    'CleanStatus', 'ConnectionReceivedId',
+    'ConnectionSentId', 'PhotoUrl',
+    'HasOptedOutOfEmail', 'HasOptedOutOfFax',
+    'DoNotCall', 'EmailBouncedDate',
+}
 
 
-def get_org_fields(org_domain: str, object_name: str = "") -> list:
-    """Get fields for an object or all fields."""
-    try:
-        with _get_db() as conn:
-            if object_name:
-                rows = conn.execute(
-                    "SELECT api_name as field_name, label as field_label, "
-                    "field_type, is_custom, is_required, max_length, picklist_values "
-                    "FROM sf_fields WHERE org_domain=? AND object_name=? "
-                    "ORDER BY api_name",
-                    (org_domain, object_name)
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT api_name as field_name, label as field_label, "
-                    "field_type, is_custom, is_required, max_length, picklist_values, object_name "
-                    "FROM sf_fields WHERE org_domain=? ORDER BY object_name, api_name",
-                    (org_domain,)
-                ).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
+def get_object_fields(org_domain: str, object_name: str) -> list:
+    """Get all cached fields for an object"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT field_name, field_label, field_type, is_required,
+               is_createable, is_custom, picklist_values,
+               reference_to, max_length
+        FROM sf_fields
+        WHERE org_domain = ? AND object_name = ?
+        ORDER BY is_required DESC, is_custom ASC, field_name
+    """, (org_domain, object_name))
+    rows = cur.fetchall()
+    conn.close()
+    cols = [
+        "field_name", "field_label", "field_type", "is_required",
+        "is_createable", "is_custom", "picklist_values",
+        "reference_to", "max_length"
+    ]
+    return [dict(zip(cols, r)) for r in rows]
 
 
-def get_org_agents(org_domain: str) -> list:
-    """Get all agents for an org."""
-    try:
-        with _get_db() as conn:
-            rows = conn.execute(
-                "SELECT * FROM sf_agents WHERE org_domain=? ORDER BY agent_name",
-                (org_domain,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
+def get_createable_fields(org_domain: str, object_name: str) -> list:
+    """
+    Get only fields that can be set when creating a record.
+    Excludes all system, audit and read-only fields.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+
+    excluded = ",".join(f"'{f}'" for f in SYSTEM_EXCLUDED_FIELDS)
+
+    cur.execute(f"""
+        SELECT field_name, field_label, field_type, is_required,
+               is_custom, picklist_values, reference_to, max_length
+        FROM sf_fields
+        WHERE org_domain  = ?
+          AND object_name = ?
+          AND is_createable = 1
+          AND field_name NOT IN ({excluded})
+        ORDER BY is_required DESC, is_custom ASC, field_name
+    """, (org_domain, object_name))
+    rows = cur.fetchall()
+    conn.close()
+    cols = [
+        "field_name", "field_label", "field_type", "is_required",
+        "is_custom", "picklist_values", "reference_to", "max_length"
+    ]
+    return [dict(zip(cols, r)) for r in rows]
 
 
-def get_org_flows(org_domain: str) -> list:
-    """Get all flows for an org."""
-    try:
-        with _get_db() as conn:
-            rows = conn.execute(
-                "SELECT * FROM sf_flows WHERE org_domain=? ORDER BY label",
-                (org_domain,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
+def get_required_fields(org_domain: str, object_name: str) -> list:
+    """Get only required fields for an object"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    excluded = ",".join(f"'{f}'" for f in SYSTEM_EXCLUDED_FIELDS)
+    cur.execute(f"""
+        SELECT field_name, field_type, picklist_values
+        FROM sf_fields
+        WHERE org_domain  = ?
+          AND object_name = ?
+          AND is_required   = 1
+          AND is_createable = 1
+          AND field_name NOT IN ({excluded})
+    """, (org_domain, object_name))
+    rows = cur.fetchall()
+    conn.close()
+    return [
+        {
+            "field_name":      r[0],
+            "field_type":      r[1],
+            "picklist_values": r[2]
+        }
+        for r in rows
+    ]
 
 
-def get_org_triggers(org_domain: str) -> list:
-    """Get all triggers for an org."""
-    try:
-        with _get_db() as conn:
-            rows = conn.execute(
-                "SELECT * FROM sf_apex_triggers WHERE org_domain=? ORDER BY name",
-                (org_domain,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
-
-
-def get_org_components(org_domain: str) -> list:
-    """Get all Lightning components for an org."""
-    try:
-        with _get_db() as conn:
-            rows = conn.execute(
-                "SELECT * FROM sf_lightning_components WHERE org_domain=? ORDER BY name",
-                (org_domain,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
-
-
-def get_org_apps(org_domain: str) -> list:
-    """Get all Lightning apps for an org."""
-    try:
-        with _get_db() as conn:
-            rows = conn.execute(
-                "SELECT * FROM sf_lightning_apps WHERE org_domain=? ORDER BY label",
-                (org_domain,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
-
-
-def get_org_packages(org_domain: str) -> list:
-    """Get all installed packages for an org."""
-    try:
-        with _get_db() as conn:
-            rows = conn.execute(
-                "SELECT * FROM sf_installed_packages WHERE org_domain=? ORDER BY name",
-                (org_domain,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
-
-
-def get_org_validation_rules(org_domain: str) -> list:
-    """Get all validation rules for an org."""
-    try:
-        with _get_db() as conn:
-            rows = conn.execute(
-                "SELECT * FROM sf_validation_rules WHERE org_domain=? ORDER BY object_name, name",
-                (org_domain,)
-            ).fetchall()
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
-
-
-# ─────────────────────────────────────────────────────────────
-# ALIASES FOR BACKWARD COMPATIBILITY
-# ─────────────────────────────────────────────────────────────
-
-def get_all_objects(org_domain: str) -> list:
-    """Alias for get_org_objects for backward compatibility."""
-    return get_org_objects(org_domain)
-
-
-def get_object_fields(org_domain: str, object_name: str = "") -> list:
-    """Alias for get_org_fields for backward compatibility."""
-    return get_org_fields(org_domain, object_name)
+def get_all_objects(org_domain: str,
+                    include_custom: bool = True) -> list:
+    """Get all discovered objects for an org"""
+    conn  = sqlite3.connect(DB_PATH)
+    cur   = conn.cursor()
+    query = """
+        SELECT object_name, object_label, object_type,
+               is_custom, is_createable, is_queryable, record_count
+        FROM sf_objects
+        WHERE org_domain = ? AND is_queryable = 1
+    """
+    params = [org_domain]
+    if not include_custom:
+        query += " AND is_custom = 0"
+    query += " ORDER BY is_custom ASC, object_name"
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    conn.close()
+    cols = [
+        "object_name", "object_label", "object_type",
+        "is_custom", "is_createable", "is_queryable", "record_count"
+    ]
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def get_all_agents(org_domain: str) -> list:
-    """Alias for get_org_agents for backward compatibility."""
-    return get_org_agents(org_domain)
+    """Get all discovered Agentforce agents"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT agent_name, agent_label, agent_type,
+               channel, status, description
+        FROM sf_agents WHERE org_domain = ?
+    """, (org_domain,))
+    rows = cur.fetchall()
+    conn.close()
+    cols = [
+        "agent_name", "agent_label", "agent_type",
+        "channel", "status", "description"
+    ]
+    return [dict(zip(cols, r)) for r in rows]
 
 
-# ─────────────────────────────────────────────────────────────
-# SEARCH FUNCTIONALITY
-# ─────────────────────────────────────────────────────────────
+def get_all_flows(org_domain: str) -> list:
+    """Get all discovered flows"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT flow_name, flow_label, flow_type, status, object_name
+        FROM sf_flows WHERE org_domain = ?
+        ORDER BY flow_type, flow_name
+    """, (org_domain,))
+    rows = cur.fetchall()
+    conn.close()
+    cols = [
+        "flow_name", "flow_label", "flow_type",
+        "status", "object_name"
+    ]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def get_all_apps(org_domain: str) -> list:
+    """Get all discovered apps"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT app_name, app_label, app_type, is_default
+        FROM sf_apps WHERE org_domain = ?
+        ORDER BY app_label
+    """, (org_domain,))
+    rows = cur.fetchall()
+    conn.close()
+    cols = ["app_name", "app_label", "app_type", "is_default"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def get_all_packages(org_domain: str) -> list:
+    """Get all discovered installed packages"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT package_name, namespace, version, package_type
+        FROM sf_packages WHERE org_domain = ?
+        ORDER BY package_name
+    """, (org_domain,))
+    rows = cur.fetchall()
+    conn.close()
+    cols = ["package_name", "namespace", "version", "package_type"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def get_sync_status(org_domain: str) -> dict:
+    """Get last sync status for an org"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT last_sync, total_objects, total_fields,
+               total_agents, total_packages, total_apps,
+               total_flows, sync_duration, status
+        FROM sf_sync_status WHERE org_domain = ?
+    """, (org_domain,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return {"status": "never"}
+    cols = [
+        "last_sync", "total_objects", "total_fields",
+        "total_agents", "total_packages", "total_apps",
+        "total_flows", "sync_duration", "status"
+    ]
+    return dict(zip(cols, row))
+
+
+def get_picklist_values(org_domain: str,
+                        object_name: str,
+                        field_name: str) -> list:
+    """Get picklist values for a specific field"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT picklist_values FROM sf_fields
+        WHERE org_domain  = ?
+          AND object_name = ?
+          AND field_name  = ?
+    """, (org_domain, object_name, field_name))
+    row = cur.fetchone()
+    conn.close()
+    if row and row[0]:
+        try:
+            return json.loads(row[0])
+        except Exception:
+            pass
+    return []
+
 
 def search_objects(org_domain: str, search_term: str) -> list:
-    """
-    Search for objects by name or label.
-    
-    Args:
-        org_domain: Organization domain
-        search_term: Search query
-    
-    Returns:
-        List of matching objects with their metadata
-    """
-    if not search_term:
-        return []
-    
-    search_pattern = f"%{search_term}%"
-    
-    try:
-        with _get_db() as conn:
-            rows = conn.execute("""
-                SELECT 
-                    api_name as object_name,
-                    label as object_label,
-                    is_custom,
-                    CASE WHEN is_custom = 1 THEN 'Custom Object' ELSE 'Standard Object' END as object_type
-                FROM sf_objects 
-                WHERE org_domain=? 
-                AND (
-                    api_name LIKE ? COLLATE NOCASE
-                    OR label LIKE ? COLLATE NOCASE
-                )
-                ORDER BY is_custom DESC, api_name
-                LIMIT 50
-            """, (org_domain, search_pattern, search_pattern)).fetchall()
-            
-            return [dict(r) for r in rows]
-    except Exception:
-        return []
+    """Search objects by name or label"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT object_name, object_label, object_type, is_custom
+        FROM sf_objects
+        WHERE org_domain = ?
+          AND (object_name  LIKE ?
+           OR  object_label LIKE ?)
+          AND is_queryable = 1
+        ORDER BY is_custom ASC, object_name
+        LIMIT 20
+    """, (org_domain, f"%{search_term}%", f"%{search_term}%"))
+    rows = cur.fetchall()
+    conn.close()
+    cols = ["object_name", "object_label", "object_type", "is_custom"]
+    return [dict(zip(cols, r)) for r in rows]
 
 
-def search_all_metadata(org_domain: str, search_term: str) -> Dict[str, list]:
+def search_fields(org_domain: str, object_name: str,
+                  search_term: str) -> list:
+    """Search fields within an object by name or label"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT field_name, field_label, field_type,
+               is_required, is_custom
+        FROM sf_fields
+        WHERE org_domain  = ?
+          AND object_name = ?
+          AND (field_name  LIKE ?
+           OR  field_label LIKE ?)
+        ORDER BY is_required DESC, field_name
+        LIMIT 30
+    """, (org_domain, object_name,
+          f"%{search_term}%", f"%{search_term}%"))
+    rows = cur.fetchall()
+    conn.close()
+    cols = [
+        "field_name", "field_label", "field_type",
+        "is_required", "is_custom"
+    ]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+# ─────────────────────────────────────────────────────────────
+# ADDITIONAL HELPER FUNCTIONS FOR OTHER METADATA
+# ─────────────────────────────────────────────────────────────
+
+def get_org_flows(org_domain: str) -> list:
+    """Alias for get_all_flows for compatibility"""
+    return get_all_flows(org_domain)
+
+
+def get_org_apps(org_domain: str) -> list:
+    """Alias for get_all_apps for compatibility"""
+    return get_all_apps(org_domain)
+
+
+def get_org_packages(org_domain: str) -> list:
+    """Alias for get_all_packages for compatibility"""
+    return get_all_packages(org_domain)
+
+
+def get_org_triggers(org_domain: str) -> list:
+    """Get triggers (not implemented yet)"""
+    return []
+
+
+def get_org_components(org_domain: str) -> list:
+    """Get Lightning components (not implemented yet)"""
+    return []
+
+
+def get_org_validation_rules(org_domain: str) -> list:
+    """Get validation rules from database"""
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT object_name, rule_name, is_active, description, error_msg
+        FROM sf_validation_rules WHERE org_domain = ?
+        ORDER BY object_name, rule_name
+    """, (org_domain,))
+    rows = cur.fetchall()
+    conn.close()
+    cols = ["object_name", "name", "is_active", "description", "error_message"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def search_all_metadata(org_domain: str, search_term: str) -> dict:
     """
     Search across all metadata types.
-    
-    Args:
-        org_domain: Organization domain
-        search_term: Search query
     
     Returns:
         Dictionary with search results for each metadata type
@@ -1290,79 +1181,82 @@ def search_all_metadata(org_domain: str, search_term: str) -> Dict[str, list]:
     results = {}
     
     try:
-        with _get_db() as conn:
-            # Search objects
-            objects = conn.execute("""
-                SELECT api_name, label, is_custom
-                FROM sf_objects 
-                WHERE org_domain=? AND (api_name LIKE ? COLLATE NOCASE OR label LIKE ? COLLATE NOCASE)
-                LIMIT 20
-            """, (org_domain, search_pattern, search_pattern)).fetchall()
-            results['objects'] = [dict(r) for r in objects]
-            
-            # Search fields
-            fields = conn.execute("""
-                SELECT object_name, api_name, label, field_type
-                FROM sf_fields 
-                WHERE org_domain=? AND (api_name LIKE ? COLLATE NOCASE OR label LIKE ? COLLATE NOCASE)
-                LIMIT 20
-            """, (org_domain, search_pattern, search_pattern)).fetchall()
-            results['fields'] = [dict(r) for r in fields]
-            
-            # Search agents
-            agents = conn.execute("""
-                SELECT agent_name, agent_type, description
-                FROM sf_agents 
-                WHERE org_domain=? AND (agent_name LIKE ? COLLATE NOCASE OR description LIKE ? COLLATE NOCASE)
-                LIMIT 10
-            """, (org_domain, search_pattern, search_pattern)).fetchall()
-            results['agents'] = [dict(r) for r in agents]
-            
-            # Search flows
-            flows = conn.execute("""
-                SELECT label, api_name, process_type, status
-                FROM sf_flows 
-                WHERE org_domain=? AND (label LIKE ? COLLATE NOCASE OR api_name LIKE ? COLLATE NOCASE)
-                LIMIT 10
-            """, (org_domain, search_pattern, search_pattern)).fetchall()
-            results['flows'] = [dict(r) for r in flows]
-            
-            # Search triggers
-            triggers = conn.execute("""
-                SELECT name, table_enum_or_id, status
-                FROM sf_apex_triggers 
-                WHERE org_domain=? AND name LIKE ? COLLATE NOCASE
-                LIMIT 10
-            """, (org_domain, search_pattern)).fetchall()
-            results['triggers'] = [dict(r) for r in triggers]
-            
-            # Search components
-            components = conn.execute("""
-                SELECT name, master_label, description
-                FROM sf_lightning_components 
-                WHERE org_domain=? AND (name LIKE ? COLLATE NOCASE OR master_label LIKE ? COLLATE NOCASE)
-                LIMIT 10
-            """, (org_domain, search_pattern, search_pattern)).fetchall()
-            results['components'] = [dict(r) for r in components]
-            
-            # Search apps
-            apps = conn.execute("""
-                SELECT label, name, description
-                FROM sf_lightning_apps 
-                WHERE org_domain=? AND (label LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE)
-                LIMIT 10
-            """, (org_domain, search_pattern, search_pattern)).fetchall()
-            results['apps'] = [dict(r) for r in apps]
-            
-            # Search packages
-            packages = conn.execute("""
-                SELECT name, namespace_prefix, version_number
-                FROM sf_installed_packages 
-                WHERE org_domain=? AND (name LIKE ? COLLATE NOCASE OR namespace_prefix LIKE ? COLLATE NOCASE)
-                LIMIT 10
-            """, (org_domain, search_pattern, search_pattern)).fetchall()
-            results['packages'] = [dict(r) for r in packages]
-            
+        conn = sqlite3.connect(DB_PATH)
+        cur  = conn.cursor()
+        
+        # Search objects
+        cur.execute("""
+            SELECT object_name, object_label, is_custom
+            FROM sf_objects 
+            WHERE org_domain=? AND (object_name LIKE ? OR object_label LIKE ?)
+            LIMIT 20
+        """, (org_domain, search_pattern, search_pattern))
+        results['objects'] = [
+            {"object_name": r[0], "object_label": r[1], "is_custom": r[2]}
+            for r in cur.fetchall()
+        ]
+        
+        # Search fields
+        cur.execute("""
+            SELECT object_name, field_name, field_label, field_type
+            FROM sf_fields 
+            WHERE org_domain=? AND (field_name LIKE ? OR field_label LIKE ?)
+            LIMIT 20
+        """, (org_domain, search_pattern, search_pattern))
+        results['fields'] = [
+            {"object_name": r[0], "field_name": r[1], "field_label": r[2], "field_type": r[3]}
+            for r in cur.fetchall()
+        ]
+        
+        # Search agents
+        cur.execute("""
+            SELECT agent_name, agent_type, description
+            FROM sf_agents 
+            WHERE org_domain=? AND (agent_name LIKE ? OR description LIKE ?)
+            LIMIT 10
+        """, (org_domain, search_pattern, search_pattern))
+        results['agents'] = [
+            {"agent_name": r[0], "agent_type": r[1], "description": r[2]}
+            for r in cur.fetchall()
+        ]
+        
+        # Search flows
+        cur.execute("""
+            SELECT flow_label, flow_name, flow_type, status
+            FROM sf_flows 
+            WHERE org_domain=? AND (flow_label LIKE ? OR flow_name LIKE ?)
+            LIMIT 10
+        """, (org_domain, search_pattern, search_pattern))
+        results['flows'] = [
+            {"label": r[0], "flow_name": r[1], "process_type": r[2], "status": r[3]}
+            for r in cur.fetchall()
+        ]
+        
+        # Search apps
+        cur.execute("""
+            SELECT app_label, app_name, app_type
+            FROM sf_apps 
+            WHERE org_domain=? AND (app_label LIKE ? OR app_name LIKE ?)
+            LIMIT 10
+        """, (org_domain, search_pattern, search_pattern))
+        results['apps'] = [
+            {"label": r[0], "name": r[1], "app_type": r[2]}
+            for r in cur.fetchall()
+        ]
+        
+        # Search packages
+        cur.execute("""
+            SELECT package_name, namespace, version
+            FROM sf_packages 
+            WHERE org_domain=? AND (package_name LIKE ? OR namespace LIKE ?)
+            LIMIT 10
+        """, (org_domain, search_pattern, search_pattern))
+        results['packages'] = [
+            {"name": r[0], "namespace_prefix": r[1], "version_number": r[2]}
+            for r in cur.fetchall()
+        ]
+        
+        conn.close()
         return results
     except Exception:
         return {}

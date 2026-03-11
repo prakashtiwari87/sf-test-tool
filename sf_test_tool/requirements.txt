@@ -1,17 +1,98 @@
+# ═══════════════════════════════════════════════════════════════
+# AMPLIFYQA — REQUIREMENTS.TXT (Phase 0 + Phase 1)
+# Updated with Phase 1 Core Testing Engines
+# ═══════════════════════════════════════════════════════════════
+
+# ── CORE FRAMEWORK (Phase 0) ──────────────────────────────────
 streamlit>=1.32.0
-simple-salesforce>=1.12.5
-litellm>=1.30.0
-pandas>=2.0.0
-openpyxl>=3.1.0
-plotly>=5.18.0
-playwright>=1.42.0
-requests>=2.31.0
 python-dotenv>=1.0.0
+
+# ── SALESFORCE INTEGRATION (Phase 0) ──────────────────────────
+simple-salesforce>=1.12.5
+requests>=2.31.0
+
+# ── LLM PROVIDERS (Phase 0 + Phase 1) ─────────────────────────
+litellm>=1.30.0  # Unified LLM API for all providers
+
+# Individual provider SDKs (optional, litellm handles most)
 openai>=1.12.0
 anthropic>=0.20.0
 google-generativeai>=0.4.0
-weasyprint>=60.0
-jinja2>=3.1.0
-Pillow>=10.0.0
-xlsxwriter>=3.1.0
-streamlit-aggrid>=0.3.4
+
+# ── WEB AUTOMATION (Phase 0 + Phase 1) ────────────────────────
+playwright>=1.42.0  # Evidence collection - screenshots
+selenium>=4.15.0  # Alternative browser automation
+
+# ── VIDEO & IMAGE PROCESSING (Phase 1) ────────────────────────
+opencv-python>=4.9.0  # Video recording
+moviepy>=1.0.3  # Video processing
+pytesseract>=0.3.10  # OCR
+pdf2image>=1.16.0  # PDF to image
+pydub>=0.25.0  # Audio processing
+Pillow>=10.0.0  # Image processing
+
+# ── PDF GENERATION (Phase 0 + Phase 1) ────────────────────────
+weasyprint>=60.0  # HTML to PDF (for test reports)
+reportlab>=4.0.0  # Programmatic PDF generation
+PyPDF2>=3.0.0  # PDF reading (for scenario generator)
+
+# ── EXCEL/DATA PROCESSING (Phase 0 + Phase 1) ─────────────────
+pandas>=2.0.0  # Data manipulation
+openpyxl>=3.1.0  # Excel read/write
+xlsxwriter>=3.1.0  # Excel generation
+streamlit-aggrid>=0.3.4  # Interactive tables in Streamlit
+python-docx>=1.1.0  # Word document reading (scenario generator)
+
+# ── CHARTS & VISUALIZATION (Phase 0 + Phase 1) ────────────────
+plotly>=5.18.0  # Interactive charts
+
+# ── DATABASE (Phase 0) ─────────────────────────────────────────
+# SQLite is built into Python - no additional packages needed
+
+# ── AWS BEDROCK (Phase 0) ──────────────────────────────────────
+boto3>=1.34.0  # AWS SDK for Bedrock
+
+# ── CONCURRENT EXECUTION (Phase 1) ────────────────────────────
+# threading is built into Python - no additional packages needed
+# concurrent.futures is built into Python - no additional packages
+
+# ── TESTING FRAMEWORKS (Optional - for development) ───────────
+# pytest>=7.4.0  # Uncomment if you want to run unit tests
+# pytest-asyncio>=0.21.0
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 1 SPECIFIC DEPENDENCIES
+# ═══════════════════════════════════════════════════════════════
+
+# These are the new packages added specifically for Phase 1 engines:
+# - playwright (screenshots, video)
+# - opencv-python (video recording)
+# - moviepy (video processing)
+# - weasyprint (PDF report generation)
+# - PyPDF2 (reading PDFs for scenario generation)
+# - python-docx (reading Word docs for scenario generation)
+
+# ═══════════════════════════════════════════════════════════════
+# INSTALLATION NOTES
+# ═══════════════════════════════════════════════════════════════
+
+# 1. Install Python packages:
+#    pip install -r requirements.txt
+
+# 2. Install Playwright browsers (for screenshot/video capture):
+#    playwright install chromium
+
+# 3. For WeasyPrint (PDF generation), you may need system dependencies:
+#    - Ubuntu/Debian: sudo apt-get install libpango-1.0-0 libpangocairo-1.0-0
+#    - macOS: brew install pango
+#    - Windows: Usually works out of the box
+
+# 4. For Tesseract OCR (optional):
+#    - Ubuntu/Debian: sudo apt-get install tesseract-ocr
+#    - macOS: brew install tesseract
+#    - Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
+
+# ═══════════════════════════════════════════════════════════════
+# TOTAL PACKAGES: ~25 (Phase 0 + Phase 1)
+# All are production-grade, well-maintained packages
+# ═══════════════════════════════════════════════════════════════
