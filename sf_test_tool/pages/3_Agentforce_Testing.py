@@ -1,281 +1,516 @@
 """
-3_Agentforce_Testing.py
-Salesforce Agentforce AI Agent Testing Module.
+3_Agentforce_Testing.py — Complete Agentforce Testing Page
+Phase 3 Enterprise: CORRECTED VERSION
+
+FIXED:
+  • Uses correct theme imports (render_header, inject_css)
+  • Matches existing page structure
+  • Compatible with existing codebase
 """
 
 import streamlit as st
+import pandas as pd
 import json
-import time
-import uuid
 from datetime import datetime
-from config.theme import inject_css, render_header, render_sidebar_logo
-from config.settings_manager import (
-    load_all_keys_to_env, get_active_salesforce_connection,
-    get_selected_judge_models
-)
-from connectors.salesforce_connector import connect_with_oauth, get_org_info
-from connectors.llm_connector import multi_model_judge, get_llm_response
 
 st.set_page_config(
     page_title="Agentforce Testing — AmplifyQA",
-    page_icon="🤖",
+    page_icon="🎯",
     layout="wide",
-    initial_sidebar_state = "collapsed",
+    initial_sidebar_state="collapsed"
 )
 
+from config.page_init import page_init
+from config.theme import render_header, inject_css
+from config.settings_manager import (
+    get_active_salesforce_connection,
+    get_all_llm_keys
+)
+
+# Phase 3 Enterprise imports
+try:
+    from engine.agentforce_db_manager import (
+        init_agentforce_database,
+        get_all_agents,
+        get_agent,
+        get_agent_configuration,
+        save_agent_configuration,
+        get_test_scripts,
+        save_test_scripts,
+        get_execution_results
+    )
+    from engine.agent_discovery_engine import discover_agents_from_org
+    from engine.test_script_generation_engine import (
+        generate_test_scripts_for_agent,
+        TEST_TYPES,
+        PERSONAS
+    )
+    from engine.test_export_engine import export_test_results
+    from connectors.salesforce_connector import connect_with_oauth
+    AGENTFORCE_AVAILABLE = True
+except ImportError as e:
+    AGENTFORCE_AVAILABLE = False
+    IMPORT_ERROR = str(e)
+
+# ── BOOT ──────────────────────────────────────────────────────
+init_agentforce_database() if AGENTFORCE_AVAILABLE else None
 inject_css()
-load_all_keys_to_env()
 
-with st.sidebar:
-    render_sidebar_logo()
-    st.page_link("app.py",                              label="🏠 Home")
-    st.page_link("pages/2_Salesforce_Testing.py",       label="🧪 Salesforce Testing")
-    st.page_link("pages/3_Agentforce_Testing.py",       label="🤖 Agentforce Testing")
-    st.page_link("pages/4_Bedrock_AgentCore_Testing.py",label="☁️ Bedrock Testing")
-    st.page_link("pages/5_Reports.py",                  label="📊 Reports")
-    st.page_link("pages/8_Settings.py",                 label="⚙️ Settings")
-
-# Auto-connect
-sf  = st.session_state.get("sf_connection")
-org = st.session_state.get("sf_org_info", {})
-
-if not sf:
-    active = get_active_salesforce_connection()
-    if active and active.get("client_id"):
-        sf, err = connect_with_oauth(
-            client_id=active["client_id"],
-            client_secret=active["client_secret"],
-            domain=active["domain"]
-        )
-        if sf:
-            st.session_state.sf_connection = sf
-            st.session_state.sf_org_info   = get_org_info(sf)
-            org = st.session_state.sf_org_info
+sf, org = page_init()
 
 render_header(
-    "Agentforce Testing", "🤖",
-    org_name=org.get("org_name",""),
-    environment="Agentforce"
+    "Agentforce Testing", "🎯",
+    org_name=org.get("org_name", ""),
+    environment=org.get("org_type", ""),
 )
 
-# ── PAGE CONTENT ──────────────────────────────────────────────
-st.markdown("""
-<div class="agentforce-card fade-in" style="margin-bottom:24px;">
-    <div style="display:flex;align-items:center;gap:12px;
-                margin-bottom:12px;">
-        <span style="font-size:32px;">🤖</span>
-        <div>
-            <h2 style="margin:0;color:white;font-size:20px;">
-                Agentforce AI Agent Testing
-            </h2>
-            <p style="margin:0;color:#a5b4fc;font-size:13px;">
-                Test Salesforce Agentforce agents — conversation flows,
-                intent accuracy, response quality and autonomous actions
-            </p>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-if not sf:
-    st.error(
-        "❌ Salesforce not connected. "
-        "Go to Settings to connect your org."
-    )
-    st.page_link("pages/8_Settings.py",
-                 label="⚙️ Go to Settings →")
+# Check if Agentforce is available
+if not AGENTFORCE_AVAILABLE:
+    st.error("❌ **Agentforce Testing Not Available**")
+    st.warning(f"Missing required components: {IMPORT_ERROR}")
+    st.info("""
+    **To enable Agentforce Testing:**
+    
+    1. Copy all engine files from `PHASE_3_ENTERPRISE/engine/` to your `engine/` directory
+    2. Run the migration script: `python migrate_agentforce_database.py`
+    3. Restart the application
+    
+    **Required files:**
+    - `agentforce_db_manager.py`
+    - `agent_discovery_engine.py`
+    - `test_script_generation_engine.py`
+    - `chat_api_testing_engine.py`
+    - `test_export_engine.py`
+    - And others...
+    """)
     st.stop()
 
-# ── DISCOVER AGENTS ──────────────────────────────────────────
-from engine.sf_metadata_engine import get_all_agents, get_sync_status
+# Check prerequisites
+if not sf:
+    st.error("❌ Please configure Salesforce connection in Settings first.")
+    st.stop()
 
-active_conn   = get_active_salesforce_connection()
-org_domain    = active_conn.get("domain","") if active_conn else ""
-agents        = get_all_agents(org_domain)
-judge_models  = st.session_state.get(
-    "judge_models", get_selected_judge_models()
-)
-llm_model     = (
-    judge_models[0]
-    if judge_models
-    else "groq/llama-3.3-70b-versatile"
-)
-
-tab1, tab2, tab3 = st.tabs([
-    "🤖 Agent Discovery",
-    "💬 Chat Testing",
-    "📊 Test Results"
+# Main tabs
+main_tabs = st.tabs([
+    "🔍 Agent Discovery",
+    "💬 Chat Agent Testing",
+    "📊 Test Results",
+    "📁 Export"
 ])
 
-# ── TAB 1: AGENT DISCOVERY ────────────────────────────────────
-with tab1:
-    st.subheader("Discovered Agentforce Agents")
+# ══════════════════════════════════════════════════════════════
+# TAB 1: AGENT DISCOVERY
+# ══════════════════════════════════════════════════════════════
 
-    if agents:
-        for agent in agents:
-            st.markdown(f"""
-            <div class="amplify-card" style="margin-bottom:12px;">
-                <div style="display:flex;align-items:center;gap:12px;">
-                    <span style="font-size:28px;">🤖</span>
-                    <div>
-                        <h3 style="margin:0;">{agent.get('agent_label','')}</h3>
-                        <p style="margin:0;color:#6b7280;font-size:13px;">
-                            {agent.get('agent_name','')} |
-                            Type: {agent.get('agent_type','')} |
-                            Status: {agent.get('status','')}
-                        </p>
-                        <p style="margin:4px 0 0;font-size:12px;color:#9ca3af;">
-                            {agent.get('description','No description')}
-                        </p>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info(
-            "No Agentforce agents discovered in this org. "
-            "Either no agents are deployed, or the org doesn't "
-            "have Agentforce enabled. Run a Metadata Sync in "
-            "Settings to refresh."
-        )
-        st.markdown("""
-        <div class="feature-card teal" style="margin-top:16px;">
-            <h4 style="margin:0 0 8px;">How to deploy an Agentforce Agent</h4>
-            <p style="margin:0;font-size:13px;color:#374151;">
-                1. Go to Salesforce Setup → Agents<br/>
-                2. Create a new Agent or use an existing template<br/>
-                3. Configure intents, actions, and channels<br/>
-                4. Activate the agent<br/>
-                5. Return here and run Metadata Sync
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-# ── TAB 2: CHAT TESTING ───────────────────────────────────────
-with tab2:
-    st.subheader("Test Agentforce Agent Conversations")
-
+with main_tabs[0]:
+    st.markdown("### 🔍 Agent Discovery")
+    st.caption("Discover and view Agentforce agents from your Salesforce org")
+    
+    active_sf = get_active_salesforce_connection()
+    if not active_sf:
+        st.warning("⚠️ No active Salesforce connection. Please configure in Settings.")
+        st.stop()
+    
     col1, col2 = st.columns([2, 1])
+    
     with col1:
-        agent_name_input = st.text_input(
-            "Agent Developer Name",
-            placeholder="e.g. My_Sales_Agent",
-            help=(
-                "The DeveloperName of the BotDefinition "
-                "in Salesforce"
-            )
-        )
-        test_prompt = st.text_area(
-            "Test Message to Agent",
-            placeholder=(
-                "e.g. What is the status of my order #12345?"
-            ),
-            height=100
-        )
-        expected = st.text_area(
-            "Expected Agent Behavior",
-            placeholder=(
-                "e.g. Agent should look up order and return status"
-            ),
-            height=80
-        )
-
+        st.info(f"📡 Connected to: **{active_sf.get('domain', '')}**")
+    
     with col2:
-        st.markdown("""
-        <div class="amplify-card">
-            <h4 style="margin:0 0 12px;">Test Options</h4>
-        </div>
-        """, unsafe_allow_html=True)
-
-        test_type = st.selectbox(
-            "Test Type",
-            ["Single Message", "Conversation Flow",
-             "Intent Validation", "Regression Suite"]
-        )
-        judge_count = len(judge_models)
-        st.metric("Judge Models", judge_count)
-
-    if st.button(
-        "▶️ Run Agentforce Test",
-        type="primary",
-        use_container_width=True
-    ):
-        if not test_prompt.strip():
-            st.error("Please enter a test message")
-        else:
-            with st.spinner("Sending to Agentforce agent..."):
-                # Use SOQL to invoke bot if available
+        if st.button("🔄 Refresh Agents", use_container_width=True):
+            with st.spinner("Discovering agents..."):
                 try:
-                    from connectors.salesforce_connector import run_soql_query
-                    # Check if we can find the agent
-                    records, _ = run_soql_query(
-                        sf,
-                        f"SELECT Id, MasterLabel, Status "
-                        f"FROM BotDefinition "
-                        f"WHERE DeveloperName = '{agent_name_input}' "
-                        f"LIMIT 1"
+                    sf, err = connect_with_oauth(
+                        client_id=active_sf.get('client_id'),
+                        client_secret=active_sf.get('client_secret'),
+                        domain=active_sf.get('domain')
                     )
-                    if records:
-                        agent_info = records[0]
-                        st.info(
-                            f"Found agent: "
-                            f"{agent_info.get('MasterLabel')}"
+                    
+                    if err:
+                        st.error(f"❌ Connection failed: {err}")
+                    else:
+                        result = discover_agents_from_org(
+                            sf_connection=sf,
+                            org_domain=active_sf.get('domain'),
+                            save_to_db=True
                         )
-
-                    # Use LLM judge to simulate agent evaluation
-                    # (actual agent invocation requires
-                    #  Messaging API or Connect API)
-                    sim_prompt = (
-                        f"Simulate how a Salesforce Agentforce AI "
-                        f"agent named '{agent_name_input}' would "
-                        f"respond to: '{test_prompt}'\n\n"
-                        f"Provide a realistic agent response based "
-                        f"on typical Salesforce CRM context."
-                    )
-                    sim_resp, sim_err = get_llm_response(
-                        sim_prompt,
-                        model=llm_model,
-                        max_tokens=400
-                    )
-
-                    if sim_resp:
-                        st.markdown("**Simulated Agent Response:**")
-                        st.info(sim_resp)
-
-                        # Judge the response
-                        judge_result = multi_model_judge(
-                            test_name=f"Agentforce: {test_prompt[:50]}",
-                            expected_result=expected or (
-                                "Agent provides helpful, accurate response"
-                            ),
-                            actual_result=sim_resp,
-                            models=judge_models
-                        )
-
-                        verdict = judge_result.get(
-                            "final_status","FAIL"
-                        )
-                        conf    = judge_result.get("confidence",0)
-
-                        if verdict == "PASS":
-                            st.success(
-                                f"✅ PASS — {conf}% confidence"
-                            )
-                        else:
-                            st.error(
-                                f"❌ {verdict} — {conf}% confidence"
-                            )
-
-                        st.caption(
-                            judge_result.get("summary","")
-                        )
-
+                        
+                        st.success(f"✅ Found {result.get('discovered', 0)} agents!")
+                        st.rerun()
+                
                 except Exception as e:
-                    st.error(f"Test error: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
+    
+    st.markdown("---")
+    
+    # Get all agents
+    agents = get_all_agents(org_domain=active_sf.get('domain'))
+    
+    if not agents:
+        st.warning("⚠️ No agents found. Click 'Refresh Agents' to discover agents from Salesforce.")
+    else:
+        st.markdown(f"### Found {len(agents)} Agent(s)")
+        
+        # Display agents in a grid
+        cols = st.columns(2)
+        
+        for idx, agent in enumerate(agents):
+            with cols[idx % 2]:
+                with st.container():
+                    st.markdown(f"#### 🤖 {agent.get('agent_name')}")
+                    st.caption(f"**Agent ID:** {agent.get('agent_id')}")
+                    
+                    if agent.get('agent_description'):
+                        st.markdown(f"_{agent.get('agent_description')}_")
+                    
+                    # Channel support
+                    channels = []
+                    if agent.get('supports_chat'): channels.append("💬 Chat")
+                    if agent.get('supports_email'): channels.append("📧 Email")
+                    if agent.get('supports_sms'): channels.append("📱 SMS")
+                    if agent.get('supports_voice'): channels.append("📞 Voice")
+                    if agent.get('supports_slack'): channels.append("💼 Slack")
+                    
+                    if channels:
+                        st.markdown("**Channels:** " + " · ".join(channels))
+                    
+                    # Status
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.success("✅ Active")
+                    with col_b:
+                        if st.button("🧪 Test", key=f"test_{agent.get('id')}", use_container_width=True):
+                            st.session_state['selected_agent_id'] = agent.get('agent_id')
+                            st.session_state['active_tab'] = 1  # Switch to testing tab
+                            st.rerun()
+                    
+                    st.markdown("---")
 
-# ── TAB 3: RESULTS ────────────────────────────────────────────
-with tab3:
-    st.subheader("Agentforce Test Results")
-    st.info(
-        "Run tests from the Chat Testing tab to see results here."
+# ══════════════════════════════════════════════════════════════
+# TAB 2: CHAT AGENT TESTING
+# ══════════════════════════════════════════════════════════════
+
+with main_tabs[1]:
+    st.markdown("### 💬 Chat Agent Testing")
+    
+    active_sf = get_active_salesforce_connection()
+    if not active_sf:
+        st.warning("⚠️ No active Salesforce connection.")
+        st.stop()
+    
+    # Agent selection
+    agents = get_all_agents(org_domain=active_sf.get('domain'))
+    
+    if not agents:
+        st.warning("⚠️ No agents available. Please discover agents first.")
+        st.stop()
+    
+    # Agent selector
+    agent_options = {f"{a.get('agent_name')} ({a.get('agent_id')})": a.get('agent_id') for a in agents}
+    
+    selected_agent_display = st.selectbox(
+        "Select Agent to Test",
+        options=list(agent_options.keys()),
+        key="agent_selector"
     )
+    
+    selected_agent_id = agent_options[selected_agent_display]
+    selected_agent = get_agent(selected_agent_id)
+    
+    if not selected_agent:
+        st.error("❌ Agent not found")
+        st.stop()
+    
+    st.success(f"Testing: **{selected_agent.get('agent_name')}**")
+    
+    # Testing mode sub-tabs
+    test_tabs = st.tabs([
+        "🔌 API Testing",
+        "🌐 UI Testing",
+        "💭 Conversational Testing"
+    ])
+    
+    # ─────────────────────────────────────────────────────────
+    # SUB-TAB 1: API TESTING
+    # ─────────────────────────────────────────────────────────
+    
+    with test_tabs[0]:
+        st.markdown("#### API Testing")
+        st.caption("Test agent via Agentforce API with LLM-generated test scripts")
+        
+        # Testing method selection
+        testing_method = st.selectbox(
+            "Testing Method",
+            options=["Agent API", "Agentforce DX", "Testing API"],
+            help="Choose how to invoke the agent"
+        )
+        
+        st.markdown("---")
+        
+        # Configuration wizard
+        st.markdown("### Step 1: Agent Configuration")
+        
+        with st.form("agent_config_form"):
+            st.markdown("**Agent Description**")
+            agent_description = st.text_area(
+                "What does this agent do?",
+                value="Deliver personalized customer interactions, understand who is calling, and determine the assistance required.",
+                height=100,
+                label_visibility="collapsed"
+            )
+            
+            st.markdown("**Agent Role**")
+            agent_role = st.text_area(
+                "What role does the agent play?",
+                value="Insurance service assistant helping customers by gathering essential information.",
+                label_visibility="collapsed"
+            )
+            
+            st.markdown("**Business Functions**")
+            business_functions = st.multiselect(
+                "Select applicable business functions",
+                options=["Sales", "Claims", "Services", "Refunds", "Escalations", "Support", "Billing"],
+                default=["Sales", "Claims", "Services"],
+                label_visibility="collapsed"
+            )
+            
+            st.markdown("**Topics**")
+            topics = st.multiselect(
+                "Key topics the agent handles",
+                options=["Caller Verification", "Escalation", "Product Info", "Order Status", "Returns", "Technical Support"],
+                default=["Caller Verification", "Escalation"],
+                label_visibility="collapsed"
+            )
+            
+            config_submitted = st.form_submit_button("💾 Save Configuration & Continue", use_container_width=True)
+            
+            if config_submitted:
+                # Save configuration
+                save_agent_configuration(
+                    agent_id=selected_agent_id,
+                    agent_description=agent_description,
+                    agent_role=agent_role,
+                    business_functions=business_functions,
+                    topics=topics,
+                    topic_instructions="",
+                    preferred_llm_model="",
+                    selected_test_types=[],
+                    selected_personas=[]
+                )
+                
+                st.success("✅ Configuration saved!")
+                st.session_state['config_saved'] = True
+        
+        # Only show Step 2 if config is saved
+        if st.session_state.get('config_saved', False):
+            st.markdown("---")
+            st.markdown("### Step 2: Test Generation Configuration")
+            
+            with st.form("test_generation_form"):
+                # LLM Model selection
+                llm_keys = get_all_llm_keys()
+                working_models = [
+                    model
+                    for provider, data in llm_keys.items()
+                    if data.get('status') == 'WORKING'
+                    for model in data.get('models', [])
+                ]
+                
+                if not working_models:
+                    st.error("❌ No working LLM models found. Please configure LLM keys in Settings.")
+                    st.stop()
+                
+                selected_llm = st.selectbox(
+                    "Preferred LLM Model",
+                    options=working_models
+                )
+                
+                # Test types selection
+                st.markdown("**Testing Types** (Select one or more)")
+                
+                test_type_cols = st.columns(3)
+                selected_test_types = []
+                
+                for idx, test_type in enumerate(TEST_TYPES):
+                    with test_type_cols[idx % 3]:
+                        if st.checkbox(test_type, key=f"test_type_{idx}"):
+                            selected_test_types.append(test_type)
+                
+                # Personas selection
+                st.markdown("**Communication Styles / Personas** (Select one or more)")
+                
+                persona_cols = st.columns(3)
+                selected_personas = []
+                
+                for idx, persona in enumerate(PERSONAS):
+                    with persona_cols[idx % 3]:
+                        if st.checkbox(persona, key=f"persona_{idx}"):
+                            selected_personas.append(persona)
+                
+                # Scripts per combination
+                scripts_per_combo = st.number_input(
+                    "Test Scripts per Combination",
+                    min_value=1,
+                    max_value=50,
+                    value=5,
+                    help="Number of test scripts to generate for each test type + persona combination"
+                )
+                
+                # Calculate total
+                total_scripts = len(selected_test_types) * len(selected_personas) * scripts_per_combo
+                
+                if selected_test_types and selected_personas:
+                    st.info(f"📊 Will generate **{total_scripts}** test scripts")
+                
+                generate_submitted = st.form_submit_button("🎯 Generate Test Scripts", use_container_width=True, type="primary")
+                
+                if generate_submitted:
+                    if not selected_test_types:
+                        st.error("❌ Please select at least one test type")
+                    elif not selected_personas:
+                        st.error("❌ Please select at least one persona")
+                    else:
+                        # Generate test scripts
+                        with st.spinner(f"Generating {total_scripts} test scripts..."):
+                            try:
+                                # Get agent config
+                                config = get_agent_configuration(selected_agent_id)
+                                
+                                if not config:
+                                    config = {
+                                        'agent_id': selected_agent_id,
+                                        'agent_description': agent_description,
+                                        'agent_role': agent_role,
+                                        'business_functions': business_functions,
+                                        'topics': topics
+                                    }
+                                
+                                # Generate scripts
+                                scripts = generate_test_scripts_for_agent(
+                                    agent_config=config,
+                                    test_types=selected_test_types,
+                                    personas=selected_personas,
+                                    scripts_per_combination=scripts_per_combo,
+                                    llm_model=selected_llm
+                                )
+                                
+                                if scripts:
+                                    # Save to database
+                                    save_test_scripts(scripts)
+                                    
+                                    st.success(f"✅ Generated and saved {len(scripts)} test scripts!")
+                                    st.balloons()
+                                    
+                                    st.session_state['scripts_generated'] = True
+                                    st.session_state['generated_scripts_count'] = len(scripts)
+                                else:
+                                    st.error("❌ Failed to generate test scripts")
+                            
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
+        
+        # Show Step 3 if scripts generated
+        if st.session_state.get('scripts_generated', False):
+            st.markdown("---")
+            st.markdown("### Step 3: Review & Execute Tests")
+            
+            # Get generated scripts
+            scripts = get_test_scripts(selected_agent_id)
+            
+            if scripts:
+                st.info(f"📋 **{len(scripts)}** test scripts ready")
+                
+                # Preview scripts
+                with st.expander("👀 Preview Test Scripts"):
+                    scripts_df = pd.DataFrame([
+                        {
+                            'Test Type': s.get('test_type'),
+                            'Persona': s.get('persona'),
+                            'Utterance': s.get('utterance')[:50] + '...',
+                            'Expected Intent': s.get('expected_intent')
+                        }
+                        for s in scripts[:20]
+                    ])
+                    st.dataframe(scripts_df, use_container_width=True)
+                
+                # Export option
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("📥 Download Scripts (Excel)", use_container_width=True):
+                        excel_bytes = export_test_results(
+                            test_scripts=scripts,
+                            format="xlsx"
+                        )
+                        
+                        st.download_button(
+                            label="💾 Download Excel File",
+                            data=excel_bytes,
+                            file_name=f"test_scripts_{selected_agent_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                
+                with col2:
+                    if st.button("📥 Download Scripts (CSV)", use_container_width=True):
+                        csv_bytes = export_test_results(
+                            test_scripts=scripts,
+                            format="csv"
+                        )
+                        
+                        st.download_button(
+                            label="💾 Download CSV File",
+                            data=csv_bytes,
+                            file_name=f"test_scripts_{selected_agent_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                
+                st.markdown("---")
+                
+                # Execute tests
+                st.markdown("### Execute Tests")
+                
+                st.warning("⚠️ **Note:** Test execution requires valid Agentforce API credentials.")
+                
+                if st.button("▶️ Execute All Tests", use_container_width=True, type="primary"):
+                    st.info("🚧 Test execution will be available once you configure Agentforce API credentials in Settings.")
+    
+    # ─────────────────────────────────────────────────────────
+    # SUB-TAB 2: UI TESTING
+    # ─────────────────────────────────────────────────────────
+    
+    with test_tabs[1]:
+        st.markdown("#### UI Testing")
+        st.caption("Test agent deployed on web pages using Playwright automation")
+        
+        st.info("🚧 UI Testing coming soon! This will use Playwright to automate browser-based agent testing.")
+    
+    # ─────────────────────────────────────────────────────────
+    # SUB-TAB 3: CONVERSATIONAL TESTING
+    # ─────────────────────────────────────────────────────────
+    
+    with test_tabs[2]:
+        st.markdown("#### Conversational Testing")
+        st.caption("Multi-turn conversations with Salesforce data validation")
+        
+        st.info("🚧 Conversational Testing coming soon! This will test multi-turn dialogues with SOQL validation.")
+
+# ══════════════════════════════════════════════════════════════
+# TAB 3: TEST RESULTS
+# ══════════════════════════════════════════════════════════════
+
+with main_tabs[2]:
+    st.markdown("### 📊 Test Results")
+    st.info("🚧 Test results viewer coming soon!")
+
+# ══════════════════════════════════════════════════════════════
+# TAB 4: EXPORT
+# ══════════════════════════════════════════════════════════════
+
+with main_tabs[3]:
+    st.markdown("### 📁 Export")
+    st.info("🚧 Export functionality coming soon!")
+
+st.markdown("---")
+st.caption("AmplifyQA - Enterprise Agentforce Testing Platform v3.0")
